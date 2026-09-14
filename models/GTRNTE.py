@@ -17,5 +17,8 @@ class Model(GTRModel):
 
     def forward(self, x, cycle_index):
         residual = self.nte(x, mode="norm")
-        residual_forecast = super().forward(residual, cycle_index)
+        residual_forecast = super().forward(
+            residual.to(dtype=self.Q.dtype),
+            cycle_index,
+        )
         return self.nte(residual_forecast, mode="denorm")

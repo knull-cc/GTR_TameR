@@ -30,7 +30,9 @@ class NTETest(unittest.TestCase):
         residual = module(history, mode="norm")
         forecast = module(torch.zeros(2, 4, 3), mode="denorm")
 
-        torch.testing.assert_close(residual, torch.zeros_like(history))
+        torch.testing.assert_close(
+            residual, torch.zeros_like(history), rtol=0.0, atol=1e-3
+        )
         torch.testing.assert_close(forecast, torch.full_like(forecast, 5.0))
         self.assertEqual(list(module.parameters()), [])
 
@@ -44,7 +46,7 @@ class NTETest(unittest.TestCase):
         torch.testing.assert_close(residual, torch.zeros_like(history))
         torch.testing.assert_close(
             forecast,
-            torch.tensor([[[25.0], [36.0]]]),
+            torch.tensor([[[24.0], [32.0]]]),
             rtol=1e-5,
             atol=1e-5,
         )
@@ -53,11 +55,11 @@ class NTETest(unittest.TestCase):
         module = NTE(pred_len=4, cutoff_ratio=0.1, alpha=0.0)
         history = torch.arange(96, dtype=torch.float32).view(1, 96, 1)
 
-        residual = module(history, mode="norm")
+        module(history, mode="norm")
         forecast = module(torch.zeros(1, 4, 1), mode="denorm")
 
         torch.testing.assert_close(
-            residual,
+            module.history_residual,
             torch.zeros_like(history),
             rtol=1e-5,
             atol=1e-4,
@@ -69,26 +71,77 @@ class NTETest(unittest.TestCase):
             atol=1e-4,
         )
 
-    def test_default_low_pass_preserves_a_quadratic_boundary_trend(self):
+    def test_quadratic_history_uses_bounded_first_order_extrapolation(self):
         module = NTE(pred_len=4, cutoff_ratio=0.1, alpha=0.0)
         time = torch.arange(96, dtype=torch.float32)
         history = time.square().view(1, 96, 1)
 
-        residual = module(history, mode="norm")
+        module(history, mode="norm")
         forecast = module(torch.zeros(1, 4, 1), mode="denorm")
 
         torch.testing.assert_close(
-            residual,
+            module.history_residual,
             torch.zeros_like(history),
             rtol=1e-5,
             atol=1e-2,
         )
         torch.testing.assert_close(
             forecast,
-            torch.tensor([[[96.0**2], [97.0**2], [98.0**2], [99.0**2]]]),
+            torch.tensor([[[9215.0], [9405.0], [9595.0], [9785.0]]]),
             rtol=1e-5,
             atol=1e-2,
         )
+
+    def test_nonconstant_residual_is_standardized_and_restored(self):
+        module = NTE(pred_len=4, cutoff_ratio=0.1, alpha=0.0)
+        time = torch.arange(96, dtype=torch.float32)
+        history = (
+            10.0
+            + 0.2 * time
+            + 2.0 * torch.sin(2.0 * torch.pi * 12.0 * time / 96.0)
+        ).view(1, 96, 1)
+
+        normalized = module(history, mode="norm")
+        restored = module(torch.ones(1, 4, 1), mode="denorm")
+
+        torch.testing.assert_close(
+            torch.var(normalized, dim=1, unbiased=False),
+            torch.ones(1, 1),
+            rtol=1e-4,
+            atol=1e-4,
+        )
+        torch.testing.assert_close(
+            restored - module.future_trend,
+            module.residual_stdev.expand(-1, 4, -1),
+        )
+
+    def test_large_constant_level_does_not_create_scaled_fit_noise(self):
+        history = torch.full((1, 96, 1), 1e6)
+
+        normalized = NTE(pred_len=4)(history, mode="norm")
+
+        torch.testing.assert_close(normalized, torch.zeros_like(normalized))
+
+    def test_long_horizon_half_precision_output_remains_finite(self):
+        history = torch.linspace(0.0, 8000.0, 96).to(torch.float16)
+        module = NTE(pred_len=720, alpha=0.0)
+        reference_module = NTE(pred_len=720, alpha=0.0)
+
+        normalized = module(history.view(1, 96, 1), mode="norm")
+        forecast = module(
+            torch.zeros(1, 720, 1, dtype=torch.float16),
+            mode="denorm",
+        )
+        reference_module(history.float().view(1, 96, 1), mode="norm")
+        reference = reference_module(
+            torch.zeros(1, 720, 1, dtype=torch.float32),
+            mode="denorm",
+        )
+
+        self.assertTrue(torch.isfinite(normalized).all())
+        self.assertTrue(torch.isfinite(forecast).all())
+        self.assertEqual(forecast.dtype, torch.float32)
+        torch.testing.assert_close(forecast, reference)
 
     def test_recent_guard_bounds_a_single_extreme_last_point(self):
         clean_module = NTE(pred_len=4)
@@ -128,20 +181,24 @@ class NTETest(unittest.TestCase):
 
         self.assertTrue(torch.all(noisy_gamma > clean_gamma))
 
-    def test_detached_trend_keeps_identity_gradient_paths(self):
+    def test_detached_state_keeps_scaled_gradient_paths(self):
         module = NTE(pred_len=3)
         history = torch.randn(2, 16, 4, requires_grad=True)
         residual = module(history, mode="norm")
         residual.sum().backward()
 
-        torch.testing.assert_close(history.grad, torch.ones_like(history))
+        torch.testing.assert_close(
+            history.grad,
+            torch.ones_like(history) / module.residual_stdev,
+        )
 
         residual_forecast = torch.randn(2, 3, 4, requires_grad=True)
         forecast = module(residual_forecast, mode="denorm")
         forecast.sum().backward()
 
         torch.testing.assert_close(
-            residual_forecast.grad, torch.ones_like(residual_forecast)
+            residual_forecast.grad,
+            torch.ones_like(residual_forecast) * module.residual_stdev,
         )
 
     def test_norm_forward_value_matches_cached_residual_in_float16(self):
@@ -153,7 +210,10 @@ class NTETest(unittest.TestCase):
 
         residual = module(history, mode="norm")
 
-        torch.testing.assert_close(residual, module.history_residual)
+        torch.testing.assert_close(
+            residual,
+            module.history_residual / module.residual_stdev,
+        )
 
     @unittest.skipUnless(hasattr(torch, "autocast"), "autocast unavailable")
     def test_state_estimation_stays_float32_across_cpu_autocast_calls(self):
@@ -166,8 +226,8 @@ class NTETest(unittest.TestCase):
         torch.testing.assert_close(
             autocast_residual,
             torch.zeros_like(history),
-            rtol=1e-5,
-            atol=1e-4,
+            rtol=0.0,
+            atol=1e-2,
         )
         self.assertEqual(module._detrend_projection.dtype, torch.float32)
 
@@ -175,8 +235,8 @@ class NTETest(unittest.TestCase):
         torch.testing.assert_close(
             plain_residual,
             torch.zeros_like(history),
-            rtol=1e-5,
-            atol=1e-4,
+            rtol=0.0,
+            atol=1e-2,
         )
 
     def test_gtr_nte_wraps_gtr_without_adding_trainable_parameters(self):
@@ -219,6 +279,32 @@ class NTETest(unittest.TestCase):
                 for parameter in wrapped.parameters()
             )
         )
+
+    def test_half_precision_wrapper_keeps_backbone_dtype_compatible(self):
+        config = SimpleNamespace(
+            seq_len=16,
+            pred_len=4,
+            enc_in=3,
+            cycle=8,
+            d_model=8,
+            dropout=0.0,
+            use_revin=1,
+            individual=0,
+            nte_cutoff_ratio=0.1,
+            nte_alpha=1.0,
+            nte_gamma_max=20.0,
+            nte_guard_sigma=3.0,
+        )
+        model = GTRNTE.Model(config).half().eval()
+
+        output = model(
+            torch.randn(2, 16, 3, dtype=torch.float16),
+            torch.tensor([0, 1]),
+        )
+
+        self.assertEqual(output.shape, (2, 4, 3))
+        self.assertEqual(output.dtype, torch.float32)
+        self.assertTrue(torch.isfinite(output).all())
 
     def test_invalid_mode_or_state_is_rejected(self):
         module = NTE(pred_len=4)

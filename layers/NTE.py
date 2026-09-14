@@ -8,10 +8,10 @@ class NTE(nn.Module):
     """Parameter-free, noise-aware trend extrapolation.
 
     ``norm`` separates an input window into a Fourier low-frequency trend and
-    a residual. ``denorm`` adds the cached, damped trend extrapolation to a
-    residual forecast. The trend path is deliberately detached: gradients
-    through the residual forecast remain an identity path to the backbone,
-    while NTE itself has no trainable state.
+    a variance-normalized residual. ``denorm`` restores the residual scale and
+    adds the cached, damped trend extrapolation. The state-estimation path is
+    deliberately detached while the backbone retains a scaled gradient path;
+    NTE itself has no trainable state.
 
     Like RevIN, this module is stateful: each ``norm`` must be followed by its
     matching ``denorm`` before another input is normalized. A single instance
@@ -52,6 +52,7 @@ class NTE(nn.Module):
         # contains only the backbone and NTE remains parameter/state-dict free.
         self.history_trend = None
         self.history_residual = None
+        self.residual_stdev = None
         self.detrend_velocity = None
         self.detrend_acceleration = None
         self.recent_scale = None
@@ -100,11 +101,14 @@ class NTE(nn.Module):
             # Estimate a quadratic from the prefix (excluding the latest
             # point), remove it before the FFT, and add it back afterwards.
             prefix = state_x[:, :-1, :]
+            prefix_level = torch.mean(prefix, dim=1, keepdim=True)
             projection = self._get_detrend_projection(
                 history_length, x.device, state_dtype
             )
-            coefficients = torch.einsum("ks,bsc->bkc", projection, prefix)
-            detrend_intercept = coefficients[:, 0:1, :]
+            coefficients = torch.einsum(
+                "ks,bsc->bkc", projection, prefix - prefix_level
+            )
+            detrend_intercept = coefficients[:, 0:1, :] + prefix_level
             detrend_velocity = coefficients[:, 1:2, :]
             detrend_acceleration = coefficients[:, 2:3, :]
             history_time = (
@@ -172,6 +176,15 @@ class NTE(nn.Module):
                 dim=1,
             )
             history_residual = guarded_state_x - history_trend
+            residual_stdev = torch.sqrt(
+                torch.var(
+                    history_residual,
+                    dim=1,
+                    keepdim=True,
+                    unbiased=False,
+                )
+                + self.eps
+            )
 
             first = history_trend[:, 0:1, :]
             middle_index = (history_length - 1) // 2
@@ -214,33 +227,43 @@ class NTE(nn.Module):
                 / float(history_length - 1)
             ).view(1, self.pred_len, 1)
             damping = torch.exp(-gamma.unsqueeze(1) * future_time)
-            future_trend = current_level + (
-                velocity * future_time
-                + 0.5 * acceleration * future_time.square()
-            ) * damping
-
-            output_dtype = x.dtype
-            self.history_trend = history_trend.to(dtype=output_dtype)
-            self.history_residual = history_residual.to(dtype=output_dtype)
-            self.detrend_velocity = detrend_velocity.to(dtype=output_dtype)
-            self.detrend_acceleration = detrend_acceleration.to(
-                dtype=output_dtype
+            # Keep extrapolation first-order. Even on a normalized time axis,
+            # a noisy second derivative grows quadratically with the forecast
+            # horizon and can dominate an otherwise well-scaled prediction.
+            future_trend = (
+                current_level + velocity * future_time * damping
             )
-            self.recent_scale = recent_scale.to(dtype=output_dtype)
-            self.recent_adjustment = (
-                guarded_last - state_x[:, -1:, :]
-            ).to(dtype=output_dtype)
-            self.current_level = current_level.to(dtype=output_dtype)
-            self.velocity = velocity.to(dtype=output_dtype)
-            self.acceleration = acceleration.to(dtype=output_dtype)
-            self.snr = snr.to(dtype=output_dtype)
-            self.gamma = gamma.to(dtype=output_dtype)
-            self.future_trend = future_trend.to(dtype=output_dtype)
+
+            # Keep cached state in the estimation dtype. Casting a long-range
+            # trend to float16 here can create Inf before denorm has a chance
+            # to combine the final result in full precision.
+            self.history_trend = history_trend
+            self.history_residual = history_residual
+            self.residual_stdev = residual_stdev
+            self.detrend_velocity = detrend_velocity
+            self.detrend_acceleration = detrend_acceleration
+            self.recent_scale = recent_scale
+            self.recent_adjustment = guarded_last - state_x[:, -1:, :]
+            self.current_level = current_level
+            self.velocity = velocity
+            self.acceleration = acceleration
+            self.snr = snr
+            self.gamma = gamma
+            self.future_trend = future_trend
             self._history_length = history_length
 
-        # Straight-through form: forward values equal the guarded residual,
-        # while d(output)/d(x) remains the identity for callers that require it.
-        return self.history_residual + (x - x.detach())
+        # State statistics are detached, as in RevIN. The explicit gradient
+        # path keeps the backbone trainable while applying the same residual
+        # scale in both the forward and backward passes.
+        normalized = (
+            self.history_residual / self.residual_stdev
+            + (x - x.detach()).to(dtype=self.residual_stdev.dtype)
+            / self.residual_stdev
+        )
+        # Keep the public module result in the state-estimation dtype. The
+        # wrapper casts only this unit-scale residual to the backbone dtype;
+        # cached raw states and the final denorm remain full precision.
+        return normalized
 
     def _restore(self, x: torch.Tensor) -> torch.Tensor:
         if self.future_trend is None:
@@ -254,7 +277,11 @@ class NTE(nn.Module):
                 "denorm input batch and feature dimensions must match the "
                 "preceding norm input"
             )
-        return x + self.future_trend.to(device=x.device, dtype=x.dtype)
+        state_dtype = self.future_trend.dtype
+        residual_stdev = self.residual_stdev.to(device=x.device)
+        future_trend = self.future_trend.to(device=x.device)
+        restored = x.to(dtype=state_dtype) * residual_stdev + future_trend
+        return restored
 
     @staticmethod
     def _validate_input(x: torch.Tensor, expected_length):
