@@ -88,6 +88,28 @@ If the data is outside `./dataset`, set `GTR_DATA_ROOT` to the directory that
 contains `ETTh1.csv`. Per-horizon JSON files are written below `./results`, and
 the four-horizon CSV/JSON summary is written to `./results/perturbation`.
 
+### ETTh1 perturbation sensitivity sweep
+
+To measure how GTR's sensitivity changes with the perturbed point's position,
+run:
+
+```bash
+bash run_sensitivity_sweep.sh 0
+```
+
+The script uses the original `GTR` model and only ETTh1. It trains (or reuses)
+one checkpoint for each prediction length, then scans positions
+`-96, -72, -50, -36, -24, -16, -10, -8, -6, -5, -4, -3, -2, -1` with the
+same perturbation seed and noise ratio. Set `GTR_FORCE_RETRAIN=1` to ignore
+existing compatible checkpoints. This fixed grid is intentional: it makes
+runs directly reproducible while sampling the final 10 observations more
+densely. By default, data is read from `./dataset/ETT-small/ETTh1.csv`; set
+`GTR_DATA_DIR` to the directory containing `ETT-small/`, or set
+`GTR_DATA_ROOT` directly to the directory containing `ETTh1.csv`.
+CSV, JSON, SVG, PNG, and PDF outputs are
+written to `./results/perturbation_sweep/` (PNG/PDF require matplotlib, which
+is included in `requirements.txt`).
+
 ### Experimental GTR + NTE plugin
 
 `GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend

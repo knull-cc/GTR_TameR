@@ -317,6 +317,7 @@ class Exp_Main(Exp_Basic):
         perturb_enabled = perturb_type != PERTURBATION_NONE
         perturb_ratio = float(getattr(self.args, 'perturb_ratio', 3.0))
         perturb_seed = int(getattr(self.args, 'perturb_seed', 2024))
+        perturb_offset = int(getattr(self.args, 'perturb_offset', 1))
         perturb_rng = (
             np.random.RandomState(perturb_seed) if perturb_enabled else None
         )
@@ -347,6 +348,7 @@ class Exp_Main(Exp_Basic):
                         perturb_type=perturb_type,
                         perturb_ratio=perturb_ratio,
                         rng=perturb_rng,
+                        perturb_offset=perturb_offset,
                     ).float().to(self.device)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
@@ -484,8 +486,11 @@ class Exp_Main(Exp_Basic):
                         'type': perturb_type,
                         'ratio': perturb_ratio,
                         'seed': perturb_seed,
+                        'offset': (
+                            perturb_offset if perturb_type == 'point' else 1
+                        ),
                         'definition': (
-                            'x[:, -1, :] += N(0, 1) * '
+                            'x[:, -offset, :] += N(0, 1) * '
                             'std(x, axis=time, ddof=0) * ratio'
                         ),
                     },
@@ -495,8 +500,10 @@ class Exp_Main(Exp_Basic):
                 }
             )
             print(
-                '{} perturbation (ratio={}, seed={}) mse:{}, mae:{}'.format(
+                '{} perturbation (offset={}, ratio={}, seed={}) '
+                'mse:{}, mae:{}'.format(
                     perturb_type,
+                    perturb_offset if perturb_type == 'point' else 1,
                     perturb_ratio,
                     perturb_seed,
                     perturbed_metrics['mse'],
@@ -518,7 +525,10 @@ class Exp_Main(Exp_Basic):
                 )
             )
             result_file = perturbation_tag(
-                perturb_type, perturb_ratio, perturb_seed
+                perturb_type,
+                perturb_ratio,
+                perturb_seed,
+                perturb_offset=perturb_offset,
             ) + '.json'
         else:
             result_file = 'clean_metrics.json'

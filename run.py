@@ -22,7 +22,8 @@ parser.add_argument(
     choices=PERTURBATION_TYPES,
     help=(
         "test-time input perturbation; 'last' reproduces TameR's recent "
-        "single anomalous point and 'none' keeps the original test behavior"
+        "single anomalous point, 'point' targets --perturb_offset, and "
+        "'none' keeps the original test behavior"
     ),
 )
 parser.add_argument(
@@ -36,6 +37,12 @@ parser.add_argument(
     type=int,
     default=2024,
     help='independent seed used only to generate test-time perturbations',
+)
+parser.add_argument(
+    '--perturb_offset',
+    type=int,
+    default=1,
+    help='point position counted backward from the forecast origin (1=latest)',
 )
 
 # basic config
@@ -162,6 +169,8 @@ args = parser.parse_args()
 
 if args.perturb_ratio < 0:
     parser.error('--perturb_ratio must be non-negative')
+if not 1 <= args.perturb_offset <= args.seq_len:
+    parser.error('--perturb_offset must be in [1, seq_len]')
 if not math.isfinite(args.nte_cutoff_ratio) or not (
     0.0 < args.nte_cutoff_ratio <= 1.0
 ):

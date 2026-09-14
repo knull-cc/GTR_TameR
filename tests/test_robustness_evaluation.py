@@ -107,9 +107,10 @@ class RobustnessEvaluationTest(unittest.TestCase):
             label_len=0,
             features="M",
             test_flop=False,
-            perturb_type="last",
+            perturb_type="point",
             perturb_ratio=3.0,
             perturb_seed=2024,
+            perturb_offset=2,
             model_id="synthetic_4_2",
             data="ETTh1",
             data_path="synthetic.csv",
@@ -147,7 +148,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
                 result_file = (
                     Path("results")
                     / "synthetic_setting"
-                    / "perturb_last_ratio3_seed2024.json"
+                    / "perturb_point_ratio3_seed2024_offset2.json"
                 )
                 self.assertTrue(result_file.is_file())
                 with result_file.open("r", encoding="utf-8") as input_file:
@@ -159,12 +160,15 @@ class RobustnessEvaluationTest(unittest.TestCase):
         self.assertEqual(len(experiment.model.inputs), 2)
         torch.testing.assert_close(experiment.model.inputs[0], original_batch_x)
         torch.testing.assert_close(
-            experiment.model.inputs[1][:, :-1, :], original_batch_x[:, :-1, :]
+            experiment.model.inputs[1][:, :-2, :], original_batch_x[:, :-2, :]
+        )
+        torch.testing.assert_close(
+            experiment.model.inputs[1][:, -1:, :], original_batch_x[:, -1:, :]
         )
         self.assertFalse(
             torch.equal(
-                experiment.model.inputs[1][:, -1:, :],
-                original_batch_x[:, -1:, :],
+                experiment.model.inputs[1][:, -2:-1, :],
+                original_batch_x[:, -2:-1, :],
             )
         )
         torch.testing.assert_close(batch_x, original_batch_x)
@@ -183,6 +187,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
         self.assertIn("clean", result)
         self.assertIn("perturbed", result)
         self.assertIn("degradation_percent", result)
+        self.assertEqual(result["perturbation"]["offset"], 2)
 
 
 if __name__ == "__main__":
