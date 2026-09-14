@@ -106,6 +106,7 @@ class SummarizePerturbationTest(unittest.TestCase):
             nte_cutoff_ratio=0.1,
             nte_alpha=1.0,
             nte_gamma_max=20.0,
+            nte_guard_sigma=3.0,
         )
         result = {
             "dataset": "ETTh1",
@@ -118,6 +119,7 @@ class SummarizePerturbationTest(unittest.TestCase):
                 "cutoff_ratio": 0.1,
                 "alpha": 1.0,
                 "gamma_max": 20.0,
+                "guard_sigma": 3.0,
             },
             "perturbation": {"type": "last", "ratio": 3.0, "seed": 2024},
         }
@@ -138,14 +140,15 @@ class SummarizePerturbationTest(unittest.TestCase):
             nte_cutoff_ratio=0.1,
             nte_alpha=1.0,
             nte_gamma_max=20.0,
+            nte_guard_sigma=3.0,
         )
 
         first = experiment_stem(args)
         args.nte_alpha = 0.5
         second = experiment_stem(args)
 
-        self.assertIn("nte_k0p1_a1_g20", first)
-        self.assertIn("nte_k0p1_a0p5_g20", second)
+        self.assertIn("nte_k0p1_a1_g20_guard3", first)
+        self.assertIn("nte_k0p1_a0p5_g20_guard3", second)
         self.assertNotEqual(first, second)
 
     def test_cli_writes_four_horizon_csv_and_json_summary(self):
@@ -245,6 +248,7 @@ class SummarizePerturbationTest(unittest.TestCase):
                             "cutoff_ratio": 0.1,
                             "alpha": alpha,
                             "gamma_max": 20.0,
+                            "guard_sigma": 3.0,
                         },
                         "perturbation": {
                             "type": "last",
@@ -280,11 +284,11 @@ class SummarizePerturbationTest(unittest.TestCase):
 
             alpha_one = output_dir / (
                 "ETTh1_GTRNTE_sl96_last_ratio3_train2024_perturb2024_"
-                "nte_k0p1_a1_g20.json"
+                "nte_k0p1_a1_g20_guard3.json"
             )
             alpha_half = output_dir / (
                 "ETTh1_GTRNTE_sl96_last_ratio3_train2024_perturb2024_"
-                "nte_k0p1_a0p5_g20.json"
+                "nte_k0p1_a0p5_g20_guard3.json"
             )
             self.assertTrue(alpha_one.is_file())
             self.assertTrue(alpha_half.is_file())

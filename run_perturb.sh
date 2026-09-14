@@ -20,6 +20,7 @@ perturb_ratio=3
 nte_cutoff_ratio="${NTE_CUTOFF_RATIO:-0.1}"
 nte_alpha="${NTE_ALPHA:-1.0}"
 nte_gamma_max="${NTE_GAMMA_MAX:-20.0}"
+nte_guard_sigma="${NTE_GUARD_SIGMA:-3.0}"
 official_datasets=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Exchange Traffic Solar)
 
 if [[ "$#" -eq 0 ]]; then
@@ -107,6 +108,7 @@ run_dataset() {
             --nte_cutoff_ratio "${nte_cutoff_ratio}"
             --nte_alpha "${nte_alpha}"
             --nte_gamma_max "${nte_gamma_max}"
+            --nte_guard_sigma "${nte_guard_sigma}"
         )
 
         if [[ -n "${dropout}" ]]; then
@@ -138,6 +140,7 @@ run_dataset() {
         --nte-cutoff-ratio "${nte_cutoff_ratio}" \
         --nte-alpha "${nte_alpha}" \
         --nte-gamma-max "${nte_gamma_max}" \
+        --nte-guard-sigma "${nte_guard_sigma}" \
         --expected-pred-lens 96 192 336 720
 }
 

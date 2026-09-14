@@ -458,6 +458,9 @@ class Exp_Main(Exp_Basic):
                 'gamma_max': float(
                     getattr(self.args, 'nte_gamma_max', 20.0)
                 ),
+                'guard_sigma': float(
+                    getattr(self.args, 'nte_guard_sigma', 3.0)
+                ),
             }
 
         print(

@@ -24,31 +24,38 @@ class NTE(nn.Module):
         cutoff_ratio: float = 0.1,
         alpha: float = 1.0,
         gamma_max: float = 20.0,
+        guard_sigma: float = 3.0,
         eps: float = 1e-5,
     ):
         super().__init__()
         if pred_len <= 0:
             raise ValueError("pred_len must be positive")
-        if not 0.0 < cutoff_ratio <= 1.0:
+        if not math.isfinite(cutoff_ratio) or not 0.0 < cutoff_ratio <= 1.0:
             raise ValueError("cutoff_ratio must be in (0, 1]")
-        if alpha < 0.0:
+        if not math.isfinite(alpha) or alpha < 0.0:
             raise ValueError("alpha must be non-negative")
-        if gamma_max <= 0.0:
+        if not math.isfinite(gamma_max) or gamma_max <= 0.0:
             raise ValueError("gamma_max must be positive")
-        if eps <= 0.0:
+        if not math.isfinite(guard_sigma) or guard_sigma <= 0.0:
+            raise ValueError("guard_sigma must be positive")
+        if not math.isfinite(eps) or eps <= 0.0:
             raise ValueError("eps must be positive")
 
         self.pred_len = int(pred_len)
         self.cutoff_ratio = float(cutoff_ratio)
         self.alpha = float(alpha)
         self.gamma_max = float(gamma_max)
+        self.guard_sigma = float(guard_sigma)
         self.eps = float(eps)
 
         # Per-batch state. These are intentionally not buffers, so a checkpoint
         # contains only the backbone and NTE remains parameter/state-dict free.
         self.history_trend = None
         self.history_residual = None
-        self.linear_slope = None
+        self.detrend_velocity = None
+        self.detrend_acceleration = None
+        self.recent_scale = None
+        self.recent_adjustment = None
         self.current_level = None
         self.velocity = None
         self.acceleration = None
@@ -56,6 +63,8 @@ class NTE(nn.Module):
         self.gamma = None
         self.future_trend = None
         self._history_length = None
+        self._detrend_projection = None
+        self._detrend_projection_spec = None
 
     def forward(self, x: torch.Tensor, mode: str) -> torch.Tensor:
         if mode == "norm":
@@ -78,12 +87,19 @@ class NTE(nn.Module):
             state_x = x.detach().to(dtype=state_dtype)
             history_length = state_x.shape[1]
 
-            # An FFT assumes a periodic boundary. Filtering a non-periodic ramp
-            # directly would join its last point back to its first and corrupt
-            # precisely the recent boundary we need to extrapolate. Remove a
-            # robust linear component first, filter only the remainder, then add
-            # the line back. Median increments keep one anomalous final point
-            # from determining the slope.
+            # An FFT assumes a periodic boundary. Filtering a non-periodic
+            # kinematic trajectory directly would join its last point back to
+            # its first and corrupt precisely the boundary we need to forecast.
+            # Estimate a quadratic from the prefix (excluding the latest
+            # point), remove it before the FFT, and add it back afterwards.
+            prefix = state_x[:, :-1, :]
+            projection = self._get_detrend_projection(
+                history_length, x.device, state_dtype
+            )
+            coefficients = torch.einsum("ks,bsc->bkc", projection, prefix)
+            detrend_intercept = coefficients[:, 0:1, :]
+            detrend_velocity = coefficients[:, 1:2, :]
+            detrend_acceleration = coefficients[:, 2:3, :]
             history_time = (
                 torch.arange(
                     history_length,
@@ -92,18 +108,47 @@ class NTE(nn.Module):
                 )
                 / float(history_length - 1)
             ).view(1, history_length, 1)
-            step_changes = state_x[:, 1:, :] - state_x[:, :-1, :]
-            linear_slope = (
-                torch.median(step_changes, dim=1, keepdim=True).values
-                * float(history_length - 1)
+            polynomial_baseline = (
+                detrend_intercept
+                + detrend_velocity * history_time
+                + 0.5 * detrend_acceleration * history_time.square()
             )
-            linear_intercept = torch.median(
-                state_x - linear_slope * history_time,
+
+            # Bound the influence of the latest observation before either the
+            # FFT or the backbone sees it. The center and scale use only prefix
+            # increments, so an arbitrarily large final corruption cannot
+            # inflate its own acceptance interval. This is a deterministic,
+            # per-sample/per-feature Hampel-style guard, not a learned stage.
+            prefix_deltas = prefix[:, 1:, :] - prefix[:, :-1, :]
+            baseline_prefix = polynomial_baseline[:, :-1, :]
+            expected_prefix_deltas = (
+                baseline_prefix[:, 1:, :] - baseline_prefix[:, :-1, :]
+            )
+            innovations = prefix_deltas - expected_prefix_deltas
+            innovation_center = torch.median(
+                innovations, dim=1, keepdim=True
+            ).values
+            recent_scale = 1.4826 * torch.median(
+                torch.abs(innovations - innovation_center),
                 dim=1,
                 keepdim=True,
-            ).values
-            linear_baseline = linear_intercept + linear_slope * history_time
-            detrended = state_x - linear_baseline
+            ).values + self.eps
+            expected_last = prefix[:, -1:, :] + (
+                polynomial_baseline[:, -1:, :]
+                - polynomial_baseline[:, -2:-1, :]
+                + innovation_center
+            )
+            guard_radius = self.guard_sigma * recent_scale
+            recent_is_outlier = (
+                torch.abs(state_x[:, -1:, :] - expected_last) > guard_radius
+            )
+            guarded_last = torch.where(
+                recent_is_outlier,
+                expected_last,
+                state_x[:, -1:, :],
+            )
+            guarded_state_x = torch.cat([prefix, guarded_last], dim=1)
+            detrended = guarded_state_x - polynomial_baseline
 
             spectrum = torch.fft.rfft(detrended, dim=1)
             retained_bins = min(
@@ -114,12 +159,12 @@ class NTE(nn.Module):
                 torch.arange(spectrum.shape[1], device=x.device)
                 < retained_bins
             ).view(1, -1, 1)
-            history_trend = linear_baseline + torch.fft.irfft(
+            history_trend = polynomial_baseline + torch.fft.irfft(
                 spectrum * low_pass_mask,
                 n=history_length,
                 dim=1,
             )
-            history_residual = state_x - history_trend
+            history_residual = guarded_state_x - history_trend
 
             first = history_trend[:, 0:1, :]
             middle_index = (history_length - 1) // 2
@@ -170,7 +215,14 @@ class NTE(nn.Module):
             output_dtype = x.dtype
             self.history_trend = history_trend.to(dtype=output_dtype)
             self.history_residual = history_residual.to(dtype=output_dtype)
-            self.linear_slope = linear_slope.to(dtype=output_dtype)
+            self.detrend_velocity = detrend_velocity.to(dtype=output_dtype)
+            self.detrend_acceleration = detrend_acceleration.to(
+                dtype=output_dtype
+            )
+            self.recent_scale = recent_scale.to(dtype=output_dtype)
+            self.recent_adjustment = (
+                guarded_last - state_x[:, -1:, :]
+            ).to(dtype=output_dtype)
             self.current_level = current_level.to(dtype=output_dtype)
             self.velocity = velocity.to(dtype=output_dtype)
             self.acceleration = acceleration.to(dtype=output_dtype)
@@ -179,9 +231,9 @@ class NTE(nn.Module):
             self.future_trend = future_trend.to(dtype=output_dtype)
             self._history_length = history_length
 
-        # The cached trend is detached, so this subtraction preserves an
-        # identity gradient from the backbone input to x.
-        return x - self.history_trend
+        # Straight-through form: forward values equal the guarded residual,
+        # while d(output)/d(x) remains the identity for callers that require it.
+        return x + (self.history_residual - x.detach())
 
     def _restore(self, x: torch.Tensor) -> torch.Tensor:
         if self.future_trend is None:
@@ -211,8 +263,32 @@ class NTE(nn.Module):
                 f"({expected_length})"
             )
 
+    def _get_detrend_projection(self, history_length, device, dtype):
+        spec = (history_length, device, dtype)
+        if self._detrend_projection_spec != spec:
+            prefix_time = (
+                torch.arange(
+                    history_length - 1,
+                    device=device,
+                    dtype=dtype,
+                )
+                / float(history_length - 1)
+            )
+            design = torch.stack(
+                [
+                    torch.ones_like(prefix_time),
+                    prefix_time,
+                    0.5 * prefix_time.square(),
+                ],
+                dim=1,
+            )
+            self._detrend_projection = torch.linalg.pinv(design)
+            self._detrend_projection_spec = spec
+        return self._detrend_projection
+
     def extra_repr(self) -> str:
         return (
             f"pred_len={self.pred_len}, cutoff_ratio={self.cutoff_ratio}, "
-            f"alpha={self.alpha}, gamma_max={self.gamma_max}, eps={self.eps}"
+            f"alpha={self.alpha}, gamma_max={self.gamma_max}, "
+            f"guard_sigma={self.guard_sigma}, eps={self.eps}"
         )

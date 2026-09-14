@@ -1,7 +1,10 @@
 def numeric_tag(value):
     """Return a filesystem-safe, stable label for a numeric value."""
 
-    return format(float(value), "g").replace("-", "m").replace(".", "p")
+    text = repr(float(value))
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text.replace("-", "m").replace("+", "p").replace(".", "p")
 
 
 def experiment_setting(args, seed):
@@ -18,9 +21,10 @@ def experiment_setting(args, seed):
         seed,
     )
     if args.model == 'GTRNTE':
-        setting += '_nte_k{}_a{}_g{}'.format(
+        setting += '_nte_k{}_a{}_g{}_guard{}'.format(
             numeric_tag(args.nte_cutoff_ratio),
             numeric_tag(args.nte_alpha),
             numeric_tag(args.nte_gamma_max),
+            numeric_tag(args.nte_guard_sigma),
         )
     return setting

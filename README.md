@@ -93,9 +93,11 @@ the four-horizon CSV/JSON summary is written to `./results/perturbation`.
 `GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend
 Extrapolation (NTE) layer. NTE removes an FFT low-frequency trend before GTR,
 lets GTR forecast the residual, and then restores an inverse-SNR-damped
-kinematic trend. Before the FFT, a robust linear component is removed and then
-added back to avoid the FFT's periodic boundary assumption corrupting a
-non-periodic trend. Velocity is the current boundary derivative of the
+kinematic trend. Before the FFT, a prefix-fitted quadratic component is removed
+and then added back to avoid the FFT's periodic boundary assumption corrupting a
+non-periodic trend. The fit uses only the history prefix, and a prefix-only
+robust innovation test replaces an anomalous most-recent point before either
+the FFT or GTR sees it. Velocity is the current boundary derivative of the
 first/middle/last quadratic fit, rather than the historical average velocity.
 It does not change GTR's number of trainable parameters.
 
@@ -108,11 +110,13 @@ bash run_nte_perturb.sh 0 ETTh1
 Omit the dataset name to run all eight Table 1 datasets, or pass any subset of
 `ETTh1 ETTh2 ETTm1 ETTm2 Weather Exchange Traffic Solar`. The NTE defaults can
 be overridden in a direct `run.py` command with `--nte_cutoff_ratio`,
-`--nte_alpha`, and `--nte_gamma_max`. Results use the distinct model name
-`GTRNTE`, so they do not overwrite the GTR baseline summaries.
+`--nte_alpha`, `--nte_gamma_max`, and `--nte_guard_sigma`. Results use the
+distinct model name `GTRNTE`, so they do not overwrite the GTR baseline
+summaries.
 For batch runs, override the defaults with the environment variables
-`NTE_CUTOFF_RATIO`, `NTE_ALPHA`, and `NTE_GAMMA_MAX`; these values are included
-in checkpoint, result, and summary identities so parameter sweeps can coexist.
+`NTE_CUTOFF_RATIO`, `NTE_ALPHA`, `NTE_GAMMA_MAX`, and `NTE_GUARD_SIGMA`; these
+values are included in checkpoint, result, and summary identities so parameter
+sweeps can coexist.
 
 ## 📜 Citation
 If you find GTR useful, please consider citing our paper:

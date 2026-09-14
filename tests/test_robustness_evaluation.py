@@ -120,6 +120,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
             nte_cutoff_ratio=0.1,
             nte_alpha=1.0,
             nte_gamma_max=20.0,
+            nte_guard_sigma=3.0,
         )
         experiment = ExpMain(args)
         experiment.device = torch.device("cpu")
@@ -176,6 +177,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
                 "cutoff_ratio": 0.1,
                 "alpha": 1.0,
                 "gamma_max": 20.0,
+                "guard_sigma": 3.0,
             },
         )
         self.assertIn("clean", result)

@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument("--nte-cutoff-ratio", type=float, default=0.1)
     parser.add_argument("--nte-alpha", type=float, default=1.0)
     parser.add_argument("--nte-gamma-max", type=float, default=20.0)
+    parser.add_argument("--nte-guard-sigma", type=float, default=3.0)
     parser.add_argument(
         "--expected-pred-lens",
         type=int,
@@ -41,7 +42,10 @@ def parse_args():
 
 
 def ratio_label(value):
-    return format(float(value), "g").replace("-", "m").replace(".", "p")
+    text = repr(float(value))
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text.replace("-", "m").replace("+", "p").replace(".", "p")
 
 
 def experiment_stem(args):
@@ -55,10 +59,11 @@ def experiment_stem(args):
         args.perturb_seed,
     )
     if args.model == "GTRNTE":
-        stem += "_nte_k{}_a{}_g{}".format(
+        stem += "_nte_k{}_a{}_g{}_guard{}".format(
             ratio_label(args.nte_cutoff_ratio),
             ratio_label(args.nte_alpha),
             ratio_label(args.nte_gamma_max),
+            ratio_label(args.nte_guard_sigma),
         )
     return stem
 
@@ -92,6 +97,7 @@ def matches_experiment(result, args):
         "cutoff_ratio": args.nte_cutoff_ratio,
         "alpha": args.nte_alpha,
         "gamma_max": args.nte_gamma_max,
+        "guard_sigma": args.nte_guard_sigma,
     }
     if plugin.get("name") != "NTE":
         return False
@@ -205,6 +211,7 @@ def main():
             "cutoff_ratio": args.nte_cutoff_ratio,
             "alpha": args.nte_alpha,
             "gamma_max": args.nte_gamma_max,
+            "guard_sigma": args.nte_guard_sigma,
         }
 
     summary = {

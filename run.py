@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import torch
 from exp.exp_main import Exp_Main
@@ -89,6 +90,12 @@ parser.add_argument(
     default=20.0,
     help='maximum damping coefficient used by GTRNTE',
 )
+parser.add_argument(
+    '--nte_guard_sigma',
+    type=float,
+    default=3.0,
+    help='prefix-only robust threshold for guarding the most recent point',
+)
 
 # PatchTST
 parser.add_argument('--fc_dropout', type=float, default=0.05, help='fully connected dropout')
@@ -155,12 +162,16 @@ args = parser.parse_args()
 
 if args.perturb_ratio < 0:
     parser.error('--perturb_ratio must be non-negative')
-if not 0.0 < args.nte_cutoff_ratio <= 1.0:
+if not math.isfinite(args.nte_cutoff_ratio) or not (
+    0.0 < args.nte_cutoff_ratio <= 1.0
+):
     parser.error('--nte_cutoff_ratio must be in (0, 1]')
-if args.nte_alpha < 0.0:
+if not math.isfinite(args.nte_alpha) or args.nte_alpha < 0.0:
     parser.error('--nte_alpha must be non-negative')
-if args.nte_gamma_max <= 0.0:
+if not math.isfinite(args.nte_gamma_max) or args.nte_gamma_max <= 0.0:
     parser.error('--nte_gamma_max must be positive')
+if not math.isfinite(args.nte_guard_sigma) or args.nte_guard_sigma <= 0.0:
+    parser.error('--nte_guard_sigma must be positive')
 
 # random seed
 fix_seed = args.random_seed
