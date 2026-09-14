@@ -144,6 +144,17 @@ class NTETest(unittest.TestCase):
             residual_forecast.grad, torch.ones_like(residual_forecast)
         )
 
+    def test_norm_forward_value_matches_cached_residual_in_float16(self):
+        module = NTE(pred_len=4)
+        time = torch.arange(96, dtype=torch.float32)
+        history = (
+            1000.0 + 8.0 * torch.sin(2.0 * torch.pi * 12.0 * time / 96.0)
+        ).to(torch.float16).view(1, 96, 1)
+
+        residual = module(history, mode="norm")
+
+        torch.testing.assert_close(residual, module.history_residual)
+
     def test_gtr_nte_wraps_gtr_without_adding_trainable_parameters(self):
         config = SimpleNamespace(
             seq_len=16,
@@ -198,6 +209,9 @@ class NTETest(unittest.TestCase):
             module(torch.zeros(2, 3, 3), mode="denorm")
         with self.assertRaisesRegex(ValueError, "batch and feature"):
             module(torch.zeros(1, 4, 3), mode="denorm")
+
+        with self.assertRaisesRegex(ValueError, "at least 5"):
+            module(torch.zeros(2, 4, 3), mode="norm")
 
     def test_nte_hyperparameters_are_part_of_the_checkpoint_identity(self):
         config = SimpleNamespace(

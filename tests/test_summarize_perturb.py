@@ -10,10 +10,19 @@ from scripts.summarize_perturb import (
     average_rows,
     experiment_stem,
     matches_experiment,
+    ratio_label,
 )
+from utils.experiment import numeric_tag
 
 
 class SummarizePerturbationTest(unittest.TestCase):
+    def test_numeric_labels_match_checkpoint_identity_encoding(self):
+        values = (0.1, 1.0, -0.25, 1e-7, 1.0000001)
+
+        for value in values:
+            with self.subTest(value=value):
+                self.assertEqual(ratio_label(value), numeric_tag(value))
+
     def test_average_percentage_is_computed_from_average_metrics(self):
         rows = [
             {

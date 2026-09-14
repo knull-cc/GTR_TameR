@@ -75,8 +75,8 @@ class NTE(nn.Module):
 
     def _separate(self, x: torch.Tensor) -> torch.Tensor:
         self._validate_input(x, expected_length=None)
-        if x.shape[1] < 3:
-            raise ValueError("NTE requires a history length of at least 3")
+        if x.shape[1] < 5:
+            raise ValueError("NTE requires a history length of at least 5")
 
         with torch.no_grad():
             state_dtype = (
@@ -233,7 +233,7 @@ class NTE(nn.Module):
 
         # Straight-through form: forward values equal the guarded residual,
         # while d(output)/d(x) remains the identity for callers that require it.
-        return x + (self.history_residual - x.detach())
+        return self.history_residual + (x - x.detach())
 
     def _restore(self, x: torch.Tensor) -> torch.Tensor:
         if self.future_trend is None:
