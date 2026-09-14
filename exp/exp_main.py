@@ -419,6 +419,9 @@ class Exp_Main(Exp_Basic):
             'setting': setting,
             'model_id': self.args.model_id,
             'model': self.args.model,
+            'dataset': os.path.splitext(
+                os.path.basename(self.args.data_path)
+            )[0],
             'data': self.args.data,
             'data_path': self.args.data_path,
             'features': self.args.features,

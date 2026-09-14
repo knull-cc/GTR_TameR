@@ -162,6 +162,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
             )
         )
         torch.testing.assert_close(batch_x, original_batch_x)
+        self.assertEqual(result["dataset"], "synthetic")
         self.assertIn("clean", result)
         self.assertIn("perturbed", result)
         self.assertIn("degradation_percent", result)

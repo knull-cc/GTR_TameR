@@ -67,6 +67,29 @@ class SummarizePerturbationTest(unittest.TestCase):
         result["perturbation"]["seed"] = 7
         self.assertFalse(matches_experiment(result, args))
 
+    def test_dataset_field_distinguishes_custom_datasets(self):
+        args = SimpleNamespace(
+            dataset="weather",
+            model="GTR",
+            seq_len=96,
+            train_seed=2024,
+            perturb_type="last",
+            perturb_ratio=3.0,
+            perturb_seed=2024,
+        )
+        result = {
+            "dataset": "weather",
+            "data": "custom",
+            "model": "GTR",
+            "seq_len": 96,
+            "train_seed": 2024,
+            "perturbation": {"type": "last", "ratio": 3.0, "seed": 2024},
+        }
+
+        self.assertTrue(matches_experiment(result, args))
+        result["dataset"] = "traffic"
+        self.assertFalse(matches_experiment(result, args))
+
     def test_cli_writes_four_horizon_csv_and_json_summary(self):
         script_path = (
             Path(__file__).parents[1] / "scripts" / "summarize_perturb.py"

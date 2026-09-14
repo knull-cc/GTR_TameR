@@ -43,12 +43,13 @@ def ratio_label(value):
 
 def matches_experiment(result, args):
     perturbation = result.get("perturbation", {})
+    dataset = result.get("dataset", result.get("data"))
     try:
         perturb_ratio = float(perturbation["ratio"])
     except (KeyError, TypeError, ValueError):
         return False
     return (
-        result.get("data") == args.dataset
+        dataset == args.dataset
         and result.get("model") == args.model
         and result.get("seq_len") == args.seq_len
         and result.get("train_seed") == args.train_seed
