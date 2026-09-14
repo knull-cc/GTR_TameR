@@ -135,6 +135,9 @@ run_dataset() {
         --perturb-ratio "${perturb_ratio}" \
         --train-seed "${train_seed}" \
         --perturb-seed "${perturb_seed}" \
+        --nte-cutoff-ratio "${nte_cutoff_ratio}" \
+        --nte-alpha "${nte_alpha}" \
+        --nte-gamma-max "${nte_gamma_max}" \
         --expected-pred-lens 96 192 336 720
 }
 

@@ -28,6 +28,9 @@ def parse_args():
     parser.add_argument("--perturb-ratio", type=float, default=3.0)
     parser.add_argument("--train-seed", type=int, default=2024)
     parser.add_argument("--perturb-seed", type=int, default=2024)
+    parser.add_argument("--nte-cutoff-ratio", type=float, default=0.1)
+    parser.add_argument("--nte-alpha", type=float, default=1.0)
+    parser.add_argument("--nte-gamma-max", type=float, default=20.0)
     parser.add_argument(
         "--expected-pred-lens",
         type=int,
@@ -41,6 +44,25 @@ def ratio_label(value):
     return format(float(value), "g").replace("-", "m").replace(".", "p")
 
 
+def experiment_stem(args):
+    stem = "{}_{}_sl{}_{}_ratio{}_train{}_perturb{}".format(
+        args.dataset,
+        args.model,
+        args.seq_len,
+        args.perturb_type,
+        ratio_label(args.perturb_ratio),
+        args.train_seed,
+        args.perturb_seed,
+    )
+    if args.model == "GTRNTE":
+        stem += "_nte_k{}_a{}_g{}".format(
+            ratio_label(args.nte_cutoff_ratio),
+            ratio_label(args.nte_alpha),
+            ratio_label(args.nte_gamma_max),
+        )
+    return stem
+
+
 def matches_experiment(result, args):
     perturbation = result.get("perturbation", {})
     dataset = result.get("dataset", result.get("data"))
@@ -48,7 +70,7 @@ def matches_experiment(result, args):
         perturb_ratio = float(perturbation["ratio"])
     except (KeyError, TypeError, ValueError):
         return False
-    return (
+    base_matches = (
         dataset == args.dataset
         and result.get("model") == args.model
         and result.get("seq_len") == args.seq_len
@@ -62,6 +84,29 @@ def matches_experiment(result, args):
         )
         and perturbation.get("seed") == args.perturb_seed
     )
+    if not base_matches or args.model != "GTRNTE":
+        return base_matches
+
+    plugin = result.get("plugin", {})
+    expected_plugin_values = {
+        "cutoff_ratio": args.nte_cutoff_ratio,
+        "alpha": args.nte_alpha,
+        "gamma_max": args.nte_gamma_max,
+    }
+    if plugin.get("name") != "NTE":
+        return False
+    try:
+        return all(
+            math.isclose(
+                float(plugin[name]),
+                float(expected),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            for name, expected in expected_plugin_values.items()
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def result_to_row(result):
@@ -130,15 +175,7 @@ def main():
     rows = [by_horizon[pred_len] for pred_len in expected]
     average = average_rows(rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = "{}_{}_sl{}_{}_ratio{}_train{}_perturb{}".format(
-        args.dataset,
-        args.model,
-        args.seq_len,
-        args.perturb_type,
-        ratio_label(args.perturb_ratio),
-        args.train_seed,
-        args.perturb_seed,
-    )
+    stem = experiment_stem(args)
     csv_path = args.output_dir / f"{stem}.csv"
     json_path = args.output_dir / f"{stem}.json"
     fieldnames = list(rows[0].keys())
@@ -149,20 +186,30 @@ def main():
         writer.writerows(rows)
         writer.writerow(average)
 
+    experiment = {
+        "dataset": args.dataset,
+        "model": args.model,
+        "seq_len": args.seq_len,
+        "prediction_lengths": expected,
+        "train_seed": args.train_seed,
+        "perturbation": {
+            "type": args.perturb_type,
+            "ratio": args.perturb_ratio,
+            "seed": args.perturb_seed,
+        },
+    }
+    if args.model == "GTRNTE":
+        experiment["plugin"] = {
+            "name": "NTE",
+            "parameter_free": True,
+            "cutoff_ratio": args.nte_cutoff_ratio,
+            "alpha": args.nte_alpha,
+            "gamma_max": args.nte_gamma_max,
+        }
+
     summary = {
         "schema_version": 1,
-        "experiment": {
-            "dataset": args.dataset,
-            "model": args.model,
-            "seq_len": args.seq_len,
-            "prediction_lengths": expected,
-            "train_seed": args.train_seed,
-            "perturbation": {
-                "type": args.perturb_type,
-                "ratio": args.perturb_ratio,
-                "seed": args.perturb_seed,
-            },
-        },
+        "experiment": experiment,
         "source_files": [source_files[pred_len] for pred_len in expected],
         "per_horizon": rows,
         "average": average,

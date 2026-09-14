@@ -5,6 +5,7 @@ from exp.exp_main import Exp_Main
 import random
 import numpy as np
 
+from utils.experiment import experiment_setting
 from utils.perturbation import PERTURBATION_TYPES
 
 parser = argparse.ArgumentParser(description='Model family for Time Series Forecasting')
@@ -186,15 +187,7 @@ if args.is_training:
     for ii in range(args.itr):
 
         # setting record of experiments
-        setting = '{}_{}_{}_ft{}_sl{}_pl{}_cycle{}_seed{}'.format(
-            args.model_id,
-            args.model,
-            args.data,
-            args.features,
-            args.seq_len,
-            args.pred_len,
-            args.cycle,
-            fix_seed)
+        setting = experiment_setting(args, fix_seed)
 
         exp = Exp(args)  # set experiments
         print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
@@ -210,15 +203,7 @@ if args.is_training:
         torch.cuda.empty_cache()
 else:
     ii = 0
-    setting = '{}_{}_{}_ft{}_sl{}_pl{}_cycle{}_seed{}'.format(
-        args.model_id,
-        args.model,
-        args.data,
-        args.features,
-        args.seq_len,
-        args.pred_len,
-        args.cycle,
-        fix_seed)
+    setting = experiment_setting(args, fix_seed)
 
     exp = Exp(args)  # set experiments
     print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))

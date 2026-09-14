@@ -451,9 +451,13 @@ class Exp_Main(Exp_Basic):
             result['plugin'] = {
                 'name': 'NTE',
                 'parameter_free': True,
-                'cutoff_ratio': float(self.args.nte_cutoff_ratio),
-                'alpha': float(self.args.nte_alpha),
-                'gamma_max': float(self.args.nte_gamma_max),
+                'cutoff_ratio': float(
+                    getattr(self.args, 'nte_cutoff_ratio', 0.1)
+                ),
+                'alpha': float(getattr(self.args, 'nte_alpha', 1.0)),
+                'gamma_max': float(
+                    getattr(self.args, 'nte_gamma_max', 20.0)
+                ),
             }
 
         print(

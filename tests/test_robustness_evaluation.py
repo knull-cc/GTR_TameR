@@ -100,7 +100,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
     def test_clean_and_perturbed_metrics_share_one_test_batch(self):
         ExpMain = load_exp_main_for_test()
         args = types.SimpleNamespace(
-            model="GTR",
+            model="GTRNTE",
             use_amp=False,
             output_attention=False,
             pred_len=2,
@@ -117,6 +117,9 @@ class RobustnessEvaluationTest(unittest.TestCase):
             seq_len=4,
             cycle=24,
             random_seed=2024,
+            nte_cutoff_ratio=0.1,
+            nte_alpha=1.0,
+            nte_gamma_max=20.0,
         )
         experiment = ExpMain(args)
         experiment.device = torch.device("cpu")
@@ -165,6 +168,16 @@ class RobustnessEvaluationTest(unittest.TestCase):
         )
         torch.testing.assert_close(batch_x, original_batch_x)
         self.assertEqual(result["dataset"], "SyntheticOfficial")
+        self.assertEqual(
+            result["plugin"],
+            {
+                "name": "NTE",
+                "parameter_free": True,
+                "cutoff_ratio": 0.1,
+                "alpha": 1.0,
+                "gamma_max": 20.0,
+            },
+        )
         self.assertIn("clean", result)
         self.assertIn("perturbed", result)
         self.assertIn("degradation_percent", result)

@@ -5,6 +5,7 @@ import torch
 
 from layers.NTE import NTE
 from models import GTR, GTRNTE
+from utils.experiment import experiment_setting
 
 
 class NTETest(unittest.TestCase):
@@ -32,6 +33,26 @@ class NTETest(unittest.TestCase):
             torch.tensor([[[25.0], [36.0]]]),
             rtol=1e-5,
             atol=1e-5,
+        )
+
+    def test_default_low_pass_preserves_a_linear_boundary_trend(self):
+        module = NTE(pred_len=4, cutoff_ratio=0.1, alpha=0.0)
+        history = torch.arange(96, dtype=torch.float32).view(1, 96, 1)
+
+        residual = module(history, mode="norm")
+        forecast = module(torch.zeros(1, 4, 1), mode="denorm")
+
+        torch.testing.assert_close(
+            residual,
+            torch.zeros_like(history),
+            rtol=1e-5,
+            atol=1e-4,
+        )
+        torch.testing.assert_close(
+            forecast,
+            torch.tensor([[[96.0], [97.0], [98.0], [99.0]]]),
+            rtol=1e-5,
+            atol=1e-4,
         )
 
     def test_noisier_residual_produces_stronger_damping(self):
@@ -79,11 +100,18 @@ class NTETest(unittest.TestCase):
         )
         baseline = GTR.Model(config)
         wrapped = GTRNTE.Model(config)
+        wrapped.load_state_dict(baseline.state_dict())
+        baseline.eval()
+        wrapped.eval()
+        history = torch.arange(96, dtype=torch.float32).view(2, 16, 3)
+        cycle_index = torch.tensor([0, 1])
 
-        output = wrapped(torch.randn(2, 16, 3), torch.tensor([0, 1]))
+        baseline_output = baseline(history, cycle_index)
+        output = wrapped(history, cycle_index)
         output.square().mean().backward()
 
         self.assertEqual(output.shape, (2, 4, 3))
+        self.assertFalse(torch.allclose(output, baseline_output))
         self.assertEqual(
             sum(parameter.numel() for parameter in baseline.parameters()),
             sum(parameter.numel() for parameter in wrapped.parameters()),
@@ -109,6 +137,28 @@ class NTETest(unittest.TestCase):
             module(torch.zeros(2, 3, 3), mode="denorm")
         with self.assertRaisesRegex(ValueError, "batch and feature"):
             module(torch.zeros(1, 4, 3), mode="denorm")
+
+    def test_nte_hyperparameters_are_part_of_the_checkpoint_identity(self):
+        config = SimpleNamespace(
+            model_id="ETTh1_96_96",
+            model="GTRNTE",
+            data="ETTh1",
+            features="M",
+            seq_len=96,
+            pred_len=96,
+            cycle=24,
+            nte_cutoff_ratio=0.1,
+            nte_alpha=1.0,
+            nte_gamma_max=20.0,
+        )
+
+        first = experiment_setting(config, seed=2024)
+        config.nte_alpha = 0.5
+        second = experiment_setting(config, seed=2024)
+
+        self.assertIn("nte_k0p1_a1_g20", first)
+        self.assertIn("nte_k0p1_a0p5_g20", second)
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":

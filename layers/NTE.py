@@ -12,6 +12,10 @@ class NTE(nn.Module):
     residual forecast. The trend path is deliberately detached: gradients
     through the residual forecast remain an identity path to the backbone,
     while NTE itself has no trainable state.
+
+    Like RevIN, this module is stateful: each ``norm`` must be followed by its
+    matching ``denorm`` before another input is normalized. A single instance
+    is therefore not re-entrant across concurrent forward calls.
     """
 
     def __init__(
@@ -44,6 +48,7 @@ class NTE(nn.Module):
         # contains only the backbone and NTE remains parameter/state-dict free.
         self.history_trend = None
         self.history_residual = None
+        self.linear_slope = None
         self.current_level = None
         self.velocity = None
         self.acceleration = None
@@ -73,7 +78,34 @@ class NTE(nn.Module):
             state_x = x.detach().to(dtype=state_dtype)
             history_length = state_x.shape[1]
 
-            spectrum = torch.fft.rfft(state_x, dim=1)
+            # An FFT assumes a periodic boundary. Filtering a non-periodic ramp
+            # directly would join its last point back to its first and corrupt
+            # precisely the recent boundary we need to extrapolate. Remove a
+            # robust linear component first, filter only the remainder, then add
+            # the line back. Median increments keep one anomalous final point
+            # from determining the slope.
+            history_time = (
+                torch.arange(
+                    history_length,
+                    device=x.device,
+                    dtype=state_dtype,
+                )
+                / float(history_length - 1)
+            ).view(1, history_length, 1)
+            step_changes = state_x[:, 1:, :] - state_x[:, :-1, :]
+            linear_slope = (
+                torch.median(step_changes, dim=1, keepdim=True).values
+                * float(history_length - 1)
+            )
+            linear_intercept = torch.median(
+                state_x - linear_slope * history_time,
+                dim=1,
+                keepdim=True,
+            ).values
+            linear_baseline = linear_intercept + linear_slope * history_time
+            detrended = state_x - linear_baseline
+
+            spectrum = torch.fft.rfft(detrended, dim=1)
             retained_bins = min(
                 spectrum.shape[1],
                 max(1, math.ceil(history_length * self.cutoff_ratio)),
@@ -82,7 +114,7 @@ class NTE(nn.Module):
                 torch.arange(spectrum.shape[1], device=x.device)
                 < retained_bins
             ).view(1, -1, 1)
-            history_trend = torch.fft.irfft(
+            history_trend = linear_baseline + torch.fft.irfft(
                 spectrum * low_pass_mask,
                 n=history_length,
                 dim=1,
@@ -138,6 +170,7 @@ class NTE(nn.Module):
             output_dtype = x.dtype
             self.history_trend = history_trend.to(dtype=output_dtype)
             self.history_residual = history_residual.to(dtype=output_dtype)
+            self.linear_slope = linear_slope.to(dtype=output_dtype)
             self.current_level = current_level.to(dtype=output_dtype)
             self.velocity = velocity.to(dtype=output_dtype)
             self.acceleration = acceleration.to(dtype=output_dtype)
