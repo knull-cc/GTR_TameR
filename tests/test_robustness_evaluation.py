@@ -40,6 +40,7 @@ def load_exp_main_for_test():
         "iTransformer",
         "TimeXer",
         "GTR",
+        "GTRNTE",
         "GTRDLinear",
         "GTRPatchTST",
         "GTRiTransformer",

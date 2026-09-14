@@ -1,7 +1,23 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST, SegRNN, CycleNet, \
-    iTransformer, TimeXer, GTR, GTRDLinear, GTRPatchTST, GTRiTransformer
+from models import (
+    Autoformer,
+    CycleNet,
+    DLinear,
+    GTR,
+    GTRDLinear,
+    GTRiTransformer,
+    GTRNTE,
+    GTRPatchTST,
+    Informer,
+    Linear,
+    NLinear,
+    PatchTST,
+    SegRNN,
+    TimeXer,
+    Transformer,
+    iTransformer,
+)
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 from utils.perturbation import (
@@ -45,6 +61,7 @@ class Exp_Main(Exp_Basic):
             'iTransformer': iTransformer,
             'TimeXer': TimeXer,
             'GTR': GTR,
+            'GTRNTE': GTRNTE,
             'GTRDLinear': GTRDLinear,
             'GTRPatchTST': GTRPatchTST,
             'GTRiTransformer': GTRiTransformer
@@ -430,6 +447,14 @@ class Exp_Main(Exp_Basic):
             'train_seed': int(self.args.random_seed),
             'clean': clean_metrics,
         }
+        if self.args.model == 'GTRNTE':
+            result['plugin'] = {
+                'name': 'NTE',
+                'parameter_free': True,
+                'cutoff_ratio': float(self.args.nte_cutoff_ratio),
+                'alpha': float(self.args.nte_alpha),
+                'gamma_max': float(self.args.nte_gamma_max),
+            }
 
         print(
             'clean mse:{}, mae:{}'.format(

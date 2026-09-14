@@ -88,6 +88,25 @@ If the data is outside `./dataset`, set `GTR_DATA_ROOT` to the directory that
 contains `ETTh1.csv`. Per-horizon JSON files are written below `./results`, and
 the four-horizon CSV/JSON summary is written to `./results/perturbation`.
 
+### Experimental GTR + NTE plugin
+
+`GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend
+Extrapolation (NTE) layer. NTE removes an FFT low-frequency trend before GTR,
+lets GTR forecast the residual, and then restores an inverse-SNR-damped
+kinematic trend. It does not change GTR's number of trainable parameters.
+
+Run the same recent-point robustness protocol with NTE on one dataset:
+
+```bash
+bash run_nte_perturb.sh 0 ETTh1
+```
+
+Omit the dataset name to run all eight Table 1 datasets, or pass any subset of
+`ETTh1 ETTh2 ETTm1 ETTm2 Weather Exchange Traffic Solar`. The NTE defaults can
+be overridden in a direct `run.py` command with `--nte_cutoff_ratio`,
+`--nte_alpha`, and `--nte_gamma_max`. Results use the distinct model name
+`GTRNTE`, so they do not overwrite the GTR baseline summaries.
+
 ## 📜 Citation
 If you find GTR useful, please consider citing our paper:
 ```bibtex

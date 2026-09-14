@@ -12,11 +12,14 @@ shift $(( $# > 0 ? 1 : 0 ))
 
 export CUDA_VISIBLE_DEVICES="${gpu}"
 
-model_name="GTR"
+model_name="${GTR_MODEL:-GTR}"
 seq_len=96
 train_seed=2024
 perturb_seed=2024
 perturb_ratio=3
+nte_cutoff_ratio="${NTE_CUTOFF_RATIO:-0.1}"
+nte_alpha="${NTE_ALPHA:-1.0}"
+nte_gamma_max="${NTE_GAMMA_MAX:-20.0}"
 official_datasets=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Exchange Traffic Solar)
 
 if [[ "$#" -eq 0 ]]; then
@@ -101,6 +104,9 @@ run_dataset() {
             --perturb_type last
             --perturb_ratio "${perturb_ratio}"
             --perturb_seed "${perturb_seed}"
+            --nte_cutoff_ratio "${nte_cutoff_ratio}"
+            --nte_alpha "${nte_alpha}"
+            --nte_gamma_max "${nte_gamma_max}"
         )
 
         if [[ -n "${dropout}" ]]; then
