@@ -67,6 +67,27 @@ To reproduce all the ablation experiment in the paper, run the following script:
 bash run_ablation.sh
 ```
 
+### TameR-style recent-point robustness experiment
+
+The test runner can evaluate a clean input and TameR's recent single anomalous
+point from the same trained checkpoint. The perturbation changes only the last
+observation of every test window:
+
+```text
+x[:, -1, :] += N(0, 1) * std(x, axis=time, ddof=0) * perturb_ratio
+```
+
+Run the representative ETTh1 experiment (input length 96; prediction lengths
+96, 192, 336, and 720; perturbation ratio 3; seed 2024) with:
+
+```bash
+bash scripts/Perturb/etth1_recent_single_anomaly.sh 0
+```
+
+If the data is outside `./dataset`, set `GTR_DATA_ROOT` to the directory that
+contains `ETTh1.csv`. Per-horizon JSON files are written below `./results`, and
+the four-horizon CSV/JSON summary is written to `./results/perturbation`.
+
 ## 📜 Citation
 If you find GTR useful, please consider citing our paper:
 ```bibtex

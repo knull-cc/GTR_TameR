@@ -5,10 +5,36 @@ from exp.exp_main import Exp_Main
 import random
 import numpy as np
 
+from utils.perturbation import PERTURBATION_TYPES
+
 parser = argparse.ArgumentParser(description='Model family for Time Series Forecasting')
 
 # random seed
 parser.add_argument('--random_seed', type=int, default=2026, help='random seed')
+
+# test-time robustness evaluation
+parser.add_argument(
+    '--perturb_type',
+    type=str,
+    default='none',
+    choices=PERTURBATION_TYPES,
+    help=(
+        "test-time input perturbation; 'last' reproduces TameR's recent "
+        "single anomalous point and 'none' keeps the original test behavior"
+    ),
+)
+parser.add_argument(
+    '--perturb_ratio',
+    type=float,
+    default=3.0,
+    help='noise scale as a multiple of each input window/channel standard deviation',
+)
+parser.add_argument(
+    '--perturb_seed',
+    type=int,
+    default=2024,
+    help='independent seed used only to generate test-time perturbations',
+)
 
 # basic config
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
@@ -56,7 +82,7 @@ parser.add_argument('--dec_way', default='pmf', help='decode way')
 parser.add_argument('--seg_len', type=int, default=48, help='segment length')
 parser.add_argument('--channel_id', type=int, default=1, help='Whether to enable channel position encoding')
 
-# Formers 
+# Formers
 parser.add_argument('--embed_type', type=int, default=0, help='0: default 1: value embedding + temporal embedding + positional embedding 2: value embedding + temporal embedding 3: value embedding + positional embedding 4: value embedding')
 parser.add_argument('--enc_in', type=int, default=7, help='encoder input size') # DLinear with --individual, use this hyperparameter as the number of channels
 parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
@@ -99,6 +125,9 @@ parser.add_argument('--devices', type=str, default='0,1', help='device ids of mu
 parser.add_argument('--test_flop', action='store_true', default=False, help='See utils/tools for usage')
 
 args = parser.parse_args()
+
+if args.perturb_ratio < 0:
+    parser.error('--perturb_ratio must be non-negative')
 
 # random seed
 fix_seed = args.random_seed
