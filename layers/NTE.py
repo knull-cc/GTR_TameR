@@ -78,7 +78,14 @@ class NTE(nn.Module):
         if x.shape[1] < 5:
             raise ValueError("NTE requires a history length of at least 5")
 
-        with torch.no_grad():
+        # ``no_grad`` does not disable an outer AMP context. State estimation
+        # intentionally stays in float32/float64 so cached projections cannot
+        # be silently stored in an autocast dtype and reused with the wrong
+        # dtype on a later call.
+        with torch.no_grad(), torch.autocast(
+            device_type=x.device.type,
+            enabled=False,
+        ):
             state_dtype = (
                 torch.float32
                 if x.dtype in (torch.float16, torch.bfloat16)

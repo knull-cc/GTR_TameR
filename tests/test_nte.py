@@ -155,6 +155,30 @@ class NTETest(unittest.TestCase):
 
         torch.testing.assert_close(residual, module.history_residual)
 
+    @unittest.skipUnless(hasattr(torch, "autocast"), "autocast unavailable")
+    def test_state_estimation_stays_float32_across_cpu_autocast_calls(self):
+        module = NTE(pred_len=4, alpha=0.0)
+        history = torch.arange(96, dtype=torch.float32).view(1, 96, 1)
+
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            autocast_residual = module(history, mode="norm")
+
+        torch.testing.assert_close(
+            autocast_residual,
+            torch.zeros_like(history),
+            rtol=1e-5,
+            atol=1e-4,
+        )
+        self.assertEqual(module._detrend_projection.dtype, torch.float32)
+
+        plain_residual = module(history, mode="norm")
+        torch.testing.assert_close(
+            plain_residual,
+            torch.zeros_like(history),
+            rtol=1e-5,
+            atol=1e-4,
+        )
+
     def test_gtr_nte_wraps_gtr_without_adding_trainable_parameters(self):
         config = SimpleNamespace(
             seq_len=16,
