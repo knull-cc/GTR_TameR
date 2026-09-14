@@ -112,6 +112,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
             model_id="synthetic_4_2",
             data="ETTh1",
             data_path="synthetic.csv",
+            dataset_name="SyntheticOfficial",
             seq_len=4,
             cycle=24,
             random_seed=2024,
@@ -162,7 +163,7 @@ class RobustnessEvaluationTest(unittest.TestCase):
             )
         )
         torch.testing.assert_close(batch_x, original_batch_x)
-        self.assertEqual(result["dataset"], "synthetic")
+        self.assertEqual(result["dataset"], "SyntheticOfficial")
         self.assertIn("clean", result)
         self.assertIn("perturbed", result)
         self.assertIn("degradation_percent", result)

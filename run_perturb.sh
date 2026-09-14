@@ -8,6 +8,7 @@ cd "${script_dir}"
 python_command="${PYTHON:-python}"
 dataset_dir="${GTR_DATA_DIR:-./dataset}"
 gpu="${1:-0}"
+shift $(( $# > 0 ? 1 : 0 ))
 
 export CUDA_VISIBLE_DEVICES="${gpu}"
 
@@ -16,19 +17,35 @@ seq_len=96
 train_seed=2024
 perturb_seed=2024
 perturb_ratio=3
+official_datasets=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Exchange Traffic Solar)
 
-required_files=(
-    "${dataset_dir}/ETT-small/ETTh1.csv"
-    "${dataset_dir}/ETT-small/ETTh2.csv"
-    "${dataset_dir}/ETT-small/ETTm1.csv"
-    "${dataset_dir}/ETT-small/ETTm2.csv"
-    "${dataset_dir}/electricity/electricity.csv"
-    "${dataset_dir}/traffic/traffic.csv"
-    "${dataset_dir}/weather/weather.csv"
-)
+if [[ "$#" -eq 0 ]]; then
+    requested_datasets=("${official_datasets[@]}")
+else
+    requested_datasets=("$@")
+fi
+
+dataset_file() {
+    case "$1" in
+        ETTh1) echo "${dataset_dir}/ETT-small/ETTh1.csv" ;;
+        ETTh2) echo "${dataset_dir}/ETT-small/ETTh2.csv" ;;
+        ETTm1) echo "${dataset_dir}/ETT-small/ETTm1.csv" ;;
+        ETTm2) echo "${dataset_dir}/ETT-small/ETTm2.csv" ;;
+        Weather) echo "${dataset_dir}/weather/weather.csv" ;;
+        Exchange) echo "${dataset_dir}/exchange_rate/exchange_rate.csv" ;;
+        Traffic) echo "${dataset_dir}/traffic/traffic.csv" ;;
+        Solar) echo "${dataset_dir}/Solar/solar_AL.txt" ;;
+        *) return 1 ;;
+    esac
+}
 
 missing_data=0
-for data_file in "${required_files[@]}"; do
+for dataset_label in "${requested_datasets[@]}"; do
+    if ! data_file="$(dataset_file "${dataset_label}")"; then
+        echo "Unknown dataset: ${dataset_label}"
+        echo "Available datasets: ${official_datasets[*]}"
+        exit 2
+    fi
     if [[ ! -f "${data_file}" ]]; then
         echo "Dataset file not found: ${data_file}"
         missing_data=1
@@ -52,6 +69,8 @@ run_dataset() {
     local learning_rate="$9"
     local dropout="${10}"
     local individual="${11}"
+    local frequency="${12}"
+    local use_revin="${13}"
     local -a command
 
     echo "============================================================"
@@ -64,6 +83,7 @@ run_dataset() {
             --is_training 1
             --root_path "${data_root}"
             --data_path "${data_path}"
+            --dataset_name "${dataset_label}"
             --model_id "${model_id_prefix}_${seq_len}_${pred_len}"
             --model "${model_name}"
             --data "${data_name}"
@@ -89,6 +109,12 @@ run_dataset() {
         if [[ "${individual}" == "1" ]]; then
             command+=(--individual 1)
         fi
+        if [[ -n "${frequency}" ]]; then
+            command+=(--freq "${frequency}")
+        fi
+        if [[ -n "${use_revin}" ]]; then
+            command+=(--use_revin "${use_revin}")
+        fi
 
         "${command[@]}"
     done
@@ -106,42 +132,57 @@ run_dataset() {
         --expected-pred-lens 96 192 336 720
 }
 
-run_dataset \
-    ETTh1 ETTh1 ETTh1 \
-    "${dataset_dir}/ETT-small" ETTh1.csv \
-    7 24 256 0.001 0.5 0
+run_named_dataset() {
+    case "$1" in
+        ETTh1)
+            run_dataset ETTh1 ETTh1 ETTh1 \
+                "${dataset_dir}/ETT-small" ETTh1.csv \
+                7 24 256 0.001 0.5 0 "" ""
+            ;;
+        ETTh2)
+            run_dataset ETTh2 ETTh2 ETTh2 \
+                "${dataset_dir}/ETT-small" ETTh2.csv \
+                7 24 256 0.001 0.5 0 "" ""
+            ;;
+        ETTm1)
+            run_dataset ETTm1 ETTm1 ETTm1 \
+                "${dataset_dir}/ETT-small" ETTm1.csv \
+                7 96 256 0.001 0.5 0 "" ""
+            ;;
+        ETTm2)
+            run_dataset ETTm2 ETTm2 ETTm2 \
+                "${dataset_dir}/ETT-small" ETTm2.csv \
+                7 96 256 0.001 0.5 0 "" ""
+            ;;
+        Weather)
+            run_dataset Weather weather custom \
+                "${dataset_dir}/weather" weather.csv \
+                21 144 64 0.001 0.5 0 "" ""
+            ;;
+        Exchange)
+            run_dataset Exchange Exchange custom \
+                "${dataset_dir}/exchange_rate" exchange_rate.csv \
+                8 512 32 0.001 "" 0 d ""
+            ;;
+        Traffic)
+            run_dataset Traffic traffic custom \
+                "${dataset_dir}/traffic" traffic.csv \
+                862 168 16 0.003 "" 1 "" ""
+            ;;
+        Solar)
+            run_dataset Solar Solar Solar \
+                "${dataset_dir}/Solar" solar_AL.txt \
+                137 144 64 0.003 "" 0 "" 0
+            ;;
+    esac
+}
 
-run_dataset \
-    ETTh2 ETTh2 ETTh2 \
-    "${dataset_dir}/ETT-small" ETTh2.csv \
-    7 24 256 0.001 0.5 0
-
-run_dataset \
-    ETTm1 ETTm1 ETTm1 \
-    "${dataset_dir}/ETT-small" ETTm1.csv \
-    7 96 256 0.001 0.5 0
-
-run_dataset \
-    ETTm2 ETTm2 ETTm2 \
-    "${dataset_dir}/ETT-small" ETTm2.csv \
-    7 96 256 0.001 0.5 0
-
-run_dataset \
-    electricity Electricity custom \
-    "${dataset_dir}/electricity" electricity.csv \
-    321 168 32 0.003 "" 0
-
-run_dataset \
-    traffic traffic custom \
-    "${dataset_dir}/traffic" traffic.csv \
-    862 168 16 0.003 "" 1
-
-run_dataset \
-    weather weather custom \
-    "${dataset_dir}/weather" weather.csv \
-    21 144 64 0.001 0.5 0
+echo "Datasets selected: ${requested_datasets[*]}"
+for dataset_label in "${requested_datasets[@]}"; do
+    run_named_dataset "${dataset_label}"
+done
 
 echo "============================================================"
-echo "All seven perturbation experiments completed."
+echo "Selected perturbation experiments completed."
 echo "Summaries are available in ./results/perturbation/."
 echo "============================================================"
