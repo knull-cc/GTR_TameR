@@ -50,18 +50,11 @@ common_args=(
 
 for pred_len in "${pred_lengths[@]}"; do
     model_id="Exchange_${seq_len}_${pred_len}"
-    setting="${model_id}_${model_name}_custom_ftM_sl${seq_len}_pl${pred_len}_cycle512_seed${train_seed}"
-    checkpoint="./checkpoints/${setting}/checkpoint.pth"
 
-    if [[ ! -f "${checkpoint}" ]]; then
-        echo "Missing Exchange H=${pred_len} checkpoint: ${checkpoint}"
-        echo "Run the Exchange GTR training/sensitivity script first."
-        exit 1
-    fi
-
-    echo "Comparing original and boundary-fixed Exchange inputs for H=${pred_len}"
+    echo "Training original GTR from scratch on Exchange for H=${pred_len}"
+    echo "Then comparing original and boundary-fixed inputs on the same checkpoint"
     "${python_command}" -u run.py \
-        --is_training 0 \
+        --is_training 1 \
         --model_id "${model_id}" \
         --pred_len "${pred_len}" \
         --perturb_type none \
