@@ -30,7 +30,7 @@ train_seed=2024
 perturb_seed=2024
 perturb_ratio=3
 pred_lengths=(96 192 336 720)
-offsets=(96 84 72 60 48 36 24 12 1)
+offsets=(96 72 50 36 24 16 10 8 6 5 4 3 2 1)
 
 common_args=(
     --root_path "${data_root}"
