@@ -110,6 +110,21 @@ CSV, JSON, SVG, PNG, and PDF outputs are
 written to `./results/perturbation_sweep/` (PNG/PDF require matplotlib, which
 is included in `requirements.txt`).
 
+### Exchange boundary-fix probe
+
+To compare the original frozen GTR predictions against a deterministic test-time
+view that replaces only the latest observation with the preceding observation,
+run:
+
+```bash
+bash run_exchange_boundary_fix.sh 0
+```
+
+The script reuses the existing Exchange checkpoints for prediction lengths 96,
+192, 336, and 720; it does not retrain GTR. Each test batch is evaluated in both
+forms so the original and fixed metrics use exactly the same samples. The
+four-horizon CSV/JSON summary is written to `./results/boundary_fix/`.
+
 ### Experimental GTR + NTE plugin
 
 `GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend

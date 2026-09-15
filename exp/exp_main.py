@@ -25,6 +25,7 @@ from utils.perturbation import (
     apply_input_perturbation,
     perturbation_tag,
 )
+from utils.boundary_fix import apply_boundary_fix
 
 import json
 import numpy as np
@@ -302,6 +303,20 @@ class Exp_Main(Exp_Basic):
             )
         return absolute, relative_percent
 
+    @staticmethod
+    def _metric_improvement(clean_metrics, fixed_metrics):
+        absolute = {}
+        relative_percent = {}
+        for name, clean_value in clean_metrics.items():
+            delta = clean_value - fixed_metrics[name]
+            absolute[name] = float(delta)
+            relative_percent[name] = (
+                float(delta / clean_value * 100.0)
+                if clean_value != 0
+                else None
+            )
+        return absolute, relative_percent
+
     def test(self, setting, test=0):
         _, test_loader = self._get_data(flag='test')
 
@@ -318,12 +333,14 @@ class Exp_Main(Exp_Basic):
         perturb_ratio = float(getattr(self.args, 'perturb_ratio', 3.0))
         perturb_seed = int(getattr(self.args, 'perturb_seed', 2024))
         perturb_offset = int(getattr(self.args, 'perturb_offset', 1))
+        boundary_fix_enabled = bool(getattr(self.args, 'boundary_fix', 0))
         perturb_rng = (
             np.random.RandomState(perturb_seed) if perturb_enabled else None
         )
 
         clean_preds = []
         perturbed_preds = []
+        fixed_preds = []
         trues = []
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
@@ -350,6 +367,10 @@ class Exp_Main(Exp_Basic):
                         rng=perturb_rng,
                         perturb_offset=perturb_offset,
                     ).float().to(self.device)
+                if boundary_fix_enabled:
+                    fixed_batch_x = apply_boundary_fix(batch_x).float().to(
+                        self.device
+                    )
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
@@ -384,6 +405,8 @@ class Exp_Main(Exp_Basic):
                 clean_outputs = run_forward(batch_x)
                 if perturb_enabled:
                     perturbed_outputs = run_forward(perturbed_batch_x)
+                if boundary_fix_enabled:
+                    fixed_outputs = run_forward(fixed_batch_x)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
                 clean_outputs = clean_outputs[
@@ -402,6 +425,11 @@ class Exp_Main(Exp_Basic):
                     perturbed_preds.append(
                         perturbed_outputs.detach().cpu().numpy()
                     )
+                if boundary_fix_enabled:
+                    fixed_outputs = fixed_outputs[
+                        :, -self.args.pred_len:, f_dim:
+                    ]
+                    fixed_preds.append(fixed_outputs.detach().cpu().numpy())
 
                 if i % 20 == 0:
                     input_values = batch_x.detach().cpu().numpy()
@@ -530,6 +558,47 @@ class Exp_Main(Exp_Basic):
                 perturb_seed,
                 perturb_offset=perturb_offset,
             ) + '.json'
+        elif boundary_fix_enabled:
+            fixed_preds = np.concatenate(fixed_preds, axis=0)
+            fixed_preds = fixed_preds.reshape(
+                -1, fixed_preds.shape[-2], fixed_preds.shape[-1]
+            )
+            fixed_metrics = self._primary_metrics(fixed_preds, trues)
+            improvement_absolute, improvement_percent = (
+                self._metric_improvement(clean_metrics, fixed_metrics)
+            )
+            result.update(
+                {
+                    'boundary_fix': {
+                        'enabled': True,
+                        'method': 'last_value',
+                        'definition': 'x[:, -1, :] = x[:, -2, :]',
+                    },
+                    'fixed': fixed_metrics,
+                    'improvement_absolute': improvement_absolute,
+                    'improvement_percent': improvement_percent,
+                }
+            )
+            print(
+                'boundary-fixed mse:{}, mae:{}'.format(
+                    fixed_metrics['mse'], fixed_metrics['mae']
+                )
+            )
+            print(
+                'improvement mse:{}, mae:{}'.format(
+                    (
+                        '{:.2f}%'.format(improvement_percent['mse'])
+                        if improvement_percent['mse'] is not None
+                        else 'undefined'
+                    ),
+                    (
+                        '{:.2f}%'.format(improvement_percent['mae'])
+                        if improvement_percent['mae'] is not None
+                        else 'undefined'
+                    ),
+                )
+            )
+            result_file = 'boundary_fix_last_value.json'
         else:
             result_file = 'clean_metrics.json'
 
@@ -554,6 +623,16 @@ class Exp_Main(Exp_Basic):
                         perturb_seed,
                         result['perturbed']['mse'],
                         result['perturbed']['mae'],
+                    )
+                )
+            elif boundary_fix_enabled:
+                output_file.write(
+                    'boundary_fix:last_value mse:{}, mae:{}, '
+                    'mse_improvement:{:.2f}%, mae_improvement:{:.2f}%\n'.format(
+                        result['fixed']['mse'],
+                        result['fixed']['mae'],
+                        result['improvement_percent']['mse'],
+                        result['improvement_percent']['mae'],
                     )
                 )
             output_file.write('\n')

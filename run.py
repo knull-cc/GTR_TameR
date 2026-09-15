@@ -44,6 +44,16 @@ parser.add_argument(
     default=1,
     help='point position counted backward from the forecast origin (1=latest)',
 )
+parser.add_argument(
+    '--boundary_fix',
+    type=int,
+    default=0,
+    choices=(0, 1),
+    help=(
+        'test-time boundary comparison; 1 also evaluates a view where the '
+        'latest input point is replaced by the preceding point'
+    ),
+)
 
 # basic config
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
@@ -171,6 +181,8 @@ if args.perturb_ratio < 0:
     parser.error('--perturb_ratio must be non-negative')
 if not 1 <= args.perturb_offset <= args.seq_len:
     parser.error('--perturb_offset must be in [1, seq_len]')
+if args.boundary_fix and args.perturb_type != 'none':
+    parser.error('--boundary_fix cannot be combined with input perturbation')
 if not math.isfinite(args.nte_cutoff_ratio) or not (
     0.0 < args.nte_cutoff_ratio <= 1.0
 ):
