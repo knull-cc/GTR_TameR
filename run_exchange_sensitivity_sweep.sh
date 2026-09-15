@@ -29,7 +29,7 @@ seq_len=96
 train_seed=2024
 perturb_seed=2024
 perturb_ratio=3
-pred_lengths=(96)
+pred_lengths=(96 192 336 720)
 offsets=(96 84 72 60 48 36 24 12 1)
 
 common_args=(
