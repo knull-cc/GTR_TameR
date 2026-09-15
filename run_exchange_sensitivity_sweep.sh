@@ -10,15 +10,15 @@ if [[ -n "${GTR_DATA_ROOT:-}" ]]; then
     data_root="${GTR_DATA_ROOT}"
 else
     dataset_dir="${GTR_DATA_DIR:-./dataset}"
-    data_root="${dataset_dir}/ETT-small"
+    data_root="${dataset_dir}/exchange_rate"
 fi
-data_path="ETTh1.csv"
+data_path="exchange_rate.csv"
 gpu="${1:-0}"
 
 if [[ ! -f "${data_root}/${data_path}" ]]; then
-    echo "ETTh1 data not found: ${data_root}/${data_path}"
-    echo "Set GTR_DATA_DIR to the directory containing ETT-small/, or"
-    echo "set GTR_DATA_ROOT directly to the directory containing ETTh1.csv."
+    echo "Exchange data not found: ${data_root}/${data_path}"
+    echo "Set GTR_DATA_DIR to the directory containing exchange_rate/, or"
+    echo "set GTR_DATA_ROOT directly to the directory containing exchange_rate.csv."
     exit 1
 fi
 
@@ -35,31 +35,31 @@ offsets=(96 84 72 60 48 36 24 12 1)
 common_args=(
     --root_path "${data_root}"
     --data_path "${data_path}"
-    --dataset_name ETTh1
+    --dataset_name Exchange
     --model "${model_name}"
-    --data ETTh1
+    --data custom
     --features M
+    --freq d
     --seq_len "${seq_len}"
-    --enc_in 7
-    --cycle 24
+    --enc_in 8
+    --cycle 512
     --train_epochs 30
     --patience 5
-    --dropout 0.5
     --itr 1
-    --batch_size 256
+    --batch_size 32
     --learning_rate 0.001
     --random_seed "${train_seed}"
 )
 
 for pred_len in "${pred_lengths[@]}"; do
-    model_id="ETTh1_${seq_len}_${pred_len}"
-    setting="${model_id}_${model_name}_ETTh1_ftM_sl${seq_len}_pl${pred_len}_cycle24_seed${train_seed}"
+    model_id="Exchange_${seq_len}_${pred_len}"
+    setting="${model_id}_${model_name}_custom_ftM_sl${seq_len}_pl${pred_len}_cycle512_seed${train_seed}"
     checkpoint="./checkpoints/${setting}/checkpoint.pth"
 
     if [[ -f "${checkpoint}" && "${GTR_FORCE_RETRAIN:-0}" != "1" ]]; then
-        echo "Using existing checkpoint for H=${pred_len}: ${checkpoint}"
+        echo "Using existing checkpoint for Exchange H=${pred_len}: ${checkpoint}"
     else
-        echo "Training original GTR on ETTh1 for H=${pred_len}"
+        echo "Training original GTR on Exchange for H=${pred_len}"
         "${python_command}" -u run.py \
             --is_training 1 \
             --model_id "${model_id}" \
@@ -69,7 +69,7 @@ for pred_len in "${pred_lengths[@]}"; do
     fi
 
     for offset in "${offsets[@]}"; do
-        echo "Testing H=${pred_len}, perturbed position=-${offset}"
+        echo "Testing Exchange H=${pred_len}, perturbed position=-${offset}"
         "${python_command}" -u run.py \
             --is_training 0 \
             --model_id "${model_id}" \
@@ -85,7 +85,7 @@ done
 "${python_command}" scripts/summarize_sensitivity_sweep.py \
     --results-dir ./results \
     --output-dir ./results/perturbation_sweep \
-    --dataset ETTh1 \
+    --dataset Exchange \
     --model "${model_name}" \
     --seq-len "${seq_len}" \
     --perturb-ratio "${perturb_ratio}" \
@@ -94,5 +94,5 @@ done
     --offsets "${offsets[@]}" \
     --expected-pred-lens "${pred_lengths[@]}"
 
-echo "Sensitivity sweep complete."
+echo "Exchange sensitivity sweep complete."
 echo "Figures and tables: ./results/perturbation_sweep/"
