@@ -26,6 +26,11 @@ from utils.perturbation import (
     perturbation_tag,
 )
 from utils.boundary_fix import apply_boundary_fix
+from utils.boundary_reconstruction import (
+    BoundaryReconstructor,
+    apply_filtered_boundary_reconstruction,
+)
+from utils.experiment import numeric_tag
 
 import json
 import numpy as np
@@ -317,6 +322,100 @@ class Exp_Main(Exp_Basic):
             )
         return absolute, relative_percent
 
+    def _boundary_reconstructor_path(self, setting):
+        return os.path.join(
+            self.args.checkpoints,
+            setting,
+            'boundary_reconstructor.pth',
+        )
+
+    def _new_boundary_reconstructor(self):
+        return BoundaryReconstructor(
+            seq_len=int(self.args.seq_len),
+            channels=int(self.args.enc_in),
+            hidden_dim=int(self.args.boundary_hidden_dim),
+        ).to(self.device)
+
+    def train_boundary_reconstructor(self, setting):
+        """Train the auxiliary prefix-to-boundary model independently of GTR."""
+
+        _, train_loader = self._get_data(flag='train')
+        _, vali_loader = self._get_data(flag='val')
+        reconstructor = self._new_boundary_reconstructor()
+        optimizer = optim.Adam(
+            reconstructor.parameters(),
+            lr=float(self.args.boundary_learning_rate),
+        )
+        criterion = nn.SmoothL1Loss()
+        checkpoint_path = self._boundary_reconstructor_path(setting)
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+        best_validation_loss = np.inf
+        stale_epochs = 0
+
+        for epoch in range(int(self.args.boundary_epochs)):
+            reconstructor.train()
+            train_losses = []
+            for batch in train_loader:
+                batch_x = batch[0].float().to(self.device)
+                optimizer.zero_grad()
+                predicted_last = reconstructor(batch_x)
+                loss = criterion(predicted_last, batch_x[:, -1, :])
+                loss.backward()
+                optimizer.step()
+                train_losses.append(float(loss.item()))
+
+            reconstructor.eval()
+            validation_losses = []
+            with torch.no_grad():
+                for batch in vali_loader:
+                    batch_x = batch[0].float().to(self.device)
+                    predicted_last = reconstructor(batch_x)
+                    validation_losses.append(
+                        float(
+                            criterion(
+                                predicted_last, batch_x[:, -1, :]
+                            ).item()
+                        )
+                    )
+
+            train_loss = float(np.mean(train_losses))
+            validation_loss = float(np.mean(validation_losses))
+            print(
+                'Boundary reconstructor epoch {} | train loss:{:.7f} '
+                'vali loss:{:.7f}'.format(
+                    epoch + 1, train_loss, validation_loss
+                )
+            )
+
+            if validation_loss < best_validation_loss:
+                best_validation_loss = validation_loss
+                stale_epochs = 0
+                torch.save(reconstructor.state_dict(), checkpoint_path)
+            else:
+                stale_epochs += 1
+                if stale_epochs >= int(self.args.boundary_patience):
+                    print('Boundary reconstructor early stopping')
+                    break
+
+        reconstructor.load_state_dict(torch.load(checkpoint_path))
+        reconstructor.eval()
+        self.boundary_reconstructor = reconstructor
+        return reconstructor
+
+    def _load_boundary_reconstructor(self, setting):
+        checkpoint_path = self._boundary_reconstructor_path(setting)
+        if not os.path.isfile(checkpoint_path):
+            raise FileNotFoundError(
+                'Boundary reconstructor checkpoint not found: {}'.format(
+                    checkpoint_path
+                )
+            )
+        reconstructor = self._new_boundary_reconstructor()
+        reconstructor.load_state_dict(torch.load(checkpoint_path))
+        reconstructor.eval()
+        self.boundary_reconstructor = reconstructor
+        return reconstructor
+
     def test(self, setting, test=0):
         _, test_loader = self._get_data(flag='test')
 
@@ -334,6 +433,20 @@ class Exp_Main(Exp_Basic):
         perturb_seed = int(getattr(self.args, 'perturb_seed', 2024))
         perturb_offset = int(getattr(self.args, 'perturb_offset', 1))
         boundary_fix_enabled = bool(getattr(self.args, 'boundary_fix', 0))
+        boundary_reconstruct_enabled = bool(
+            getattr(self.args, 'boundary_reconstruct', 0)
+        )
+        boundary_view_enabled = (
+            boundary_fix_enabled or boundary_reconstruct_enabled
+        )
+        boundary_threshold = float(
+            getattr(self.args, 'boundary_threshold', 3.0)
+        )
+        if boundary_reconstruct_enabled:
+            reconstructor = getattr(self, 'boundary_reconstructor', None)
+            if reconstructor is None:
+                reconstructor = self._load_boundary_reconstructor(setting)
+            reconstructor.eval()
         perturb_rng = (
             np.random.RandomState(perturb_seed) if perturb_enabled else None
         )
@@ -342,6 +455,12 @@ class Exp_Main(Exp_Basic):
         perturbed_preds = []
         fixed_preds = []
         trues = []
+        boundary_replaced_count = 0
+        boundary_value_count = 0
+        boundary_score_sum = 0.0
+        boundary_reconstruction_squared_error = 0.0
+        boundary_persistence_squared_error = 0.0
+        boundary_error_value_count = 0
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -377,6 +496,30 @@ class Exp_Main(Exp_Basic):
                 batch_y_mark = batch_y_mark.float().to(self.device)
                 batch_cycle = batch_cycle.int().to(self.device)
 
+                if boundary_reconstruct_enabled:
+                    predicted_last = reconstructor(batch_x)
+                    fixed_batch_x, replacement_mask, boundary_scores = (
+                        apply_filtered_boundary_reconstruction(
+                            batch_x,
+                            predicted_last,
+                            threshold=boundary_threshold,
+                        )
+                    )
+                    true_last = batch_x[:, -1, :]
+                    persistence_last = batch_x[:, -2, :]
+                    boundary_replaced_count += int(
+                        replacement_mask.sum().item()
+                    )
+                    boundary_value_count += replacement_mask.numel()
+                    boundary_score_sum += float(boundary_scores.sum().item())
+                    boundary_reconstruction_squared_error += float(
+                        ((predicted_last - true_last) ** 2).sum().item()
+                    )
+                    boundary_persistence_squared_error += float(
+                        ((persistence_last - true_last) ** 2).sum().item()
+                    )
+                    boundary_error_value_count += true_last.numel()
+
                 dec_inp = torch.zeros_like(
                     batch_y[:, -self.args.pred_len:, :]
                 ).float()
@@ -405,7 +548,7 @@ class Exp_Main(Exp_Basic):
                 clean_outputs = run_forward(batch_x)
                 if perturb_enabled:
                     perturbed_outputs = run_forward(perturbed_batch_x)
-                if boundary_fix_enabled:
+                if boundary_view_enabled:
                     fixed_outputs = run_forward(fixed_batch_x)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
@@ -425,7 +568,7 @@ class Exp_Main(Exp_Basic):
                     perturbed_preds.append(
                         perturbed_outputs.detach().cpu().numpy()
                     )
-                if boundary_fix_enabled:
+                if boundary_view_enabled:
                     fixed_outputs = fixed_outputs[
                         :, -self.args.pred_len:, f_dim:
                     ]
@@ -558,6 +701,91 @@ class Exp_Main(Exp_Basic):
                 perturb_seed,
                 perturb_offset=perturb_offset,
             ) + '.json'
+        elif boundary_reconstruct_enabled:
+            fixed_preds = np.concatenate(fixed_preds, axis=0)
+            fixed_preds = fixed_preds.reshape(
+                -1, fixed_preds.shape[-2], fixed_preds.shape[-1]
+            )
+            fixed_metrics = self._primary_metrics(fixed_preds, trues)
+            improvement_absolute, improvement_percent = (
+                self._metric_improvement(clean_metrics, fixed_metrics)
+            )
+            replacement_rate = (
+                boundary_replaced_count / boundary_value_count
+            )
+            result.update(
+                {
+                    'boundary_reconstruction': {
+                        'enabled': True,
+                        'method': 'context_mlp_delta',
+                        'causal': True,
+                        'input_prefix_length': int(self.args.seq_len) - 1,
+                        'hidden_dim': int(self.args.boundary_hidden_dim),
+                        'training_loss': 'smooth_l1',
+                        'max_training_epochs': int(
+                            getattr(self.args, 'boundary_epochs', 20)
+                        ),
+                        'training_patience': int(
+                            getattr(self.args, 'boundary_patience', 5)
+                        ),
+                        'learning_rate': float(
+                            getattr(
+                                self.args,
+                                'boundary_learning_rate',
+                                0.001,
+                            )
+                        ),
+                        'filter': 'last_increment_mad',
+                        'threshold': boundary_threshold,
+                        'replacement_rate': float(replacement_rate),
+                        'mean_filter_score': float(
+                            boundary_score_sum / boundary_value_count
+                        ),
+                        'reconstruction_mse': float(
+                            boundary_reconstruction_squared_error
+                            / boundary_error_value_count
+                        ),
+                        'persistence_mse': float(
+                            boundary_persistence_squared_error
+                            / boundary_error_value_count
+                        ),
+                    },
+                    'fixed': fixed_metrics,
+                    'improvement_absolute': improvement_absolute,
+                    'improvement_percent': improvement_percent,
+                }
+            )
+            print(
+                'filtered boundary-reconstructed mse:{}, mae:{}'.format(
+                    fixed_metrics['mse'], fixed_metrics['mae']
+                )
+            )
+            print(
+                'replacement rate:{:.2f}%'.format(replacement_rate * 100.0)
+            )
+            print(
+                'boundary reconstruction mse:{:.6f}, persistence mse:{:.6f}'.format(
+                    result['boundary_reconstruction']['reconstruction_mse'],
+                    result['boundary_reconstruction']['persistence_mse'],
+                )
+            )
+            print(
+                'improvement mse:{}, mae:{}'.format(
+                    (
+                        '{:.2f}%'.format(improvement_percent['mse'])
+                        if improvement_percent['mse'] is not None
+                        else 'undefined'
+                    ),
+                    (
+                        '{:.2f}%'.format(improvement_percent['mae'])
+                        if improvement_percent['mae'] is not None
+                        else 'undefined'
+                    ),
+                )
+            )
+            result_file = 'boundary_reconstruct_mad{}.json'.format(
+                numeric_tag(boundary_threshold)
+            )
         elif boundary_fix_enabled:
             fixed_preds = np.concatenate(fixed_preds, axis=0)
             fixed_preds = fixed_preds.reshape(
@@ -623,6 +851,20 @@ class Exp_Main(Exp_Basic):
                         perturb_seed,
                         result['perturbed']['mse'],
                         result['perturbed']['mae'],
+                    )
+                )
+            elif boundary_reconstruct_enabled:
+                output_file.write(
+                    'boundary_reconstruct:context_mlp_delta threshold:{} '
+                    'mse:{}, mae:{}, mse_improvement:{:.2f}%, '
+                    'mae_improvement:{:.2f}%, replacement_rate:{:.2f}%\n'.format(
+                        boundary_threshold,
+                        result['fixed']['mse'],
+                        result['fixed']['mae'],
+                        result['improvement_percent']['mse'],
+                        result['improvement_percent']['mae'],
+                        result['boundary_reconstruction']['replacement_rate']
+                        * 100.0,
                     )
                 )
             elif boundary_fix_enabled:

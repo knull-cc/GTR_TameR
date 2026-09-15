@@ -54,6 +54,46 @@ parser.add_argument(
         'latest input point is replaced by the preceding point'
     ),
 )
+parser.add_argument(
+    '--boundary_reconstruct',
+    type=int,
+    default=0,
+    choices=(0, 1),
+    help=(
+        'train/load a prefix-only boundary reconstructor and replace the '
+        'latest channel value only when its increment exceeds the MAD filter'
+    ),
+)
+parser.add_argument(
+    '--boundary_threshold',
+    type=float,
+    default=3.0,
+    help='MAD threshold for filtered context boundary replacement',
+)
+parser.add_argument(
+    '--boundary_hidden_dim',
+    type=int,
+    default=64,
+    help='hidden size of the context boundary reconstructor',
+)
+parser.add_argument(
+    '--boundary_epochs',
+    type=int,
+    default=20,
+    help='maximum training epochs for the context boundary reconstructor',
+)
+parser.add_argument(
+    '--boundary_patience',
+    type=int,
+    default=5,
+    help='validation patience for the context boundary reconstructor',
+)
+parser.add_argument(
+    '--boundary_learning_rate',
+    type=float,
+    default=0.001,
+    help='learning rate for the context boundary reconstructor',
+)
 
 # basic config
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
@@ -181,8 +221,20 @@ if args.perturb_ratio < 0:
     parser.error('--perturb_ratio must be non-negative')
 if not 1 <= args.perturb_offset <= args.seq_len:
     parser.error('--perturb_offset must be in [1, seq_len]')
-if args.boundary_fix and args.perturb_type != 'none':
-    parser.error('--boundary_fix cannot be combined with input perturbation')
+if (args.boundary_fix or args.boundary_reconstruct) and args.perturb_type != 'none':
+    parser.error('boundary intervention cannot be combined with input perturbation')
+if args.boundary_fix and args.boundary_reconstruct:
+    parser.error('--boundary_fix and --boundary_reconstruct are mutually exclusive')
+if not math.isfinite(args.boundary_threshold) or args.boundary_threshold <= 0:
+    parser.error('--boundary_threshold must be finite and positive')
+if args.boundary_hidden_dim <= 0:
+    parser.error('--boundary_hidden_dim must be positive')
+if args.boundary_epochs <= 0:
+    parser.error('--boundary_epochs must be positive')
+if args.boundary_patience <= 0:
+    parser.error('--boundary_patience must be positive')
+if not math.isfinite(args.boundary_learning_rate) or args.boundary_learning_rate <= 0:
+    parser.error('--boundary_learning_rate must be finite and positive')
 if not math.isfinite(args.nte_cutoff_ratio) or not (
     0.0 < args.nte_cutoff_ratio <= 1.0
 ):
@@ -224,6 +276,13 @@ if args.is_training:
         exp = Exp(args)  # set experiments
         print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
         exp.train(setting)
+
+        if args.boundary_reconstruct:
+            print(
+                '>>>>>>>training boundary reconstructor : '
+                '{}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting)
+            )
+            exp.train_boundary_reconstructor(setting)
 
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         exp.test(setting)

@@ -120,10 +120,27 @@ run:
 bash run_exchange_boundary_fix.sh 0
 ```
 
-The script reuses the existing Exchange checkpoints for prediction lengths 96,
-192, 336, and 720; it does not retrain GTR. Each test batch is evaluated in both
-forms so the original and fixed metrics use exactly the same samples. The
-four-horizon CSV/JSON summary is written to `./results/boundary_fix/`.
+The script trains fresh Exchange checkpoints for prediction lengths 96, 192,
+336, and 720. Each test batch is evaluated in both forms so the original and
+fixed metrics use exactly the same samples. The four-horizon CSV/JSON summary
+is written to `./results/boundary_fix/`.
+
+### Exchange filtered context-boundary reconstruction
+
+The Experiment-A probe trains a clean original GTR and an independent auxiliary
+model that predicts the final input point from the preceding 95 points. At test
+time, each channel is replaced only when its final increment exceeds a causal
+three-MAD filter fitted within that input window:
+
+```bash
+bash run_exchange_boundary_reconstruction.sh 0
+```
+
+The auxiliary reconstruction never receives the true final point as input and
+does not update GTR. The same best GTR checkpoint evaluates the original and
+filtered-reconstructed views. Set `BOUNDARY_THRESHOLD`, `BOUNDARY_HIDDEN_DIM`,
+or `BOUNDARY_EPOCHS` to override the defaults. Four-horizon CSV/JSON summaries
+are written to `./results/boundary_reconstruction/`.
 
 ### Experimental GTR + NTE plugin
 

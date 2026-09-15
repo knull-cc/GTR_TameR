@@ -96,7 +96,123 @@ class RecordingGTR(torch.nn.Module):
         return batch_x[:, -self.pred_len:, :]
 
 
+class PreviousPointReconstructor(torch.nn.Module):
+    def forward(self, batch_x):
+        return batch_x[:, -2, :]
+
+
 class RobustnessEvaluationTest(unittest.TestCase):
+    def test_boundary_reconstructor_trains_and_saves_separately(self):
+        ExpMain = load_exp_main_for_test()
+        args = types.SimpleNamespace(
+            model="GTR",
+            seq_len=4,
+            enc_in=1,
+            boundary_hidden_dim=4,
+            boundary_learning_rate=0.01,
+            boundary_epochs=1,
+            boundary_patience=1,
+        )
+        experiment = ExpMain(args)
+        experiment.device = torch.device("cpu")
+        experiment.model = RecordingGTR(pred_len=2)
+        batch_x = torch.tensor(
+            [
+                [[0.0], [1.0], [2.0], [3.0]],
+                [[1.0], [2.0], [3.0], [4.0]],
+            ]
+        )
+        loader = [(batch_x, None, None, None, None)]
+        experiment._get_data = lambda flag: (None, loader)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args.checkpoints = temp_dir
+            reconstructor = experiment.train_boundary_reconstructor(
+                "synthetic_reconstructor"
+            )
+            checkpoint = (
+                Path(temp_dir)
+                / "synthetic_reconstructor"
+                / "boundary_reconstructor.pth"
+            )
+            self.assertTrue(checkpoint.is_file())
+
+        self.assertIs(reconstructor, experiment.boundary_reconstructor)
+        self.assertEqual(len(experiment.model.inputs), 0)
+
+    def test_filtered_context_reconstruction_uses_same_frozen_backbone(self):
+        ExpMain = load_exp_main_for_test()
+        args = types.SimpleNamespace(
+            model="GTR",
+            use_amp=False,
+            output_attention=False,
+            pred_len=2,
+            label_len=0,
+            features="M",
+            test_flop=False,
+            perturb_type="none",
+            perturb_ratio=3.0,
+            perturb_seed=2024,
+            perturb_offset=1,
+            boundary_fix=0,
+            boundary_reconstruct=1,
+            boundary_threshold=3.0,
+            boundary_hidden_dim=8,
+            model_id="synthetic_5_2",
+            data="custom",
+            data_path="synthetic.csv",
+            dataset_name="SyntheticContextBoundary",
+            seq_len=5,
+            enc_in=1,
+            cycle=24,
+            random_seed=2024,
+        )
+        experiment = ExpMain(args)
+        experiment.device = torch.device("cpu")
+        experiment.model = RecordingGTR(pred_len=args.pred_len)
+        experiment.boundary_reconstructor = PreviousPointReconstructor()
+
+        batch_x = torch.tensor(
+            [
+                [[0.0], [1.0], [2.0], [3.0], [20.0]],
+                [[1.0], [2.0], [3.0], [4.0], [-10.0]],
+            ]
+        )
+        original_batch_x = batch_x.clone()
+        batch_y = torch.tensor([[[3.0], [3.0]], [[4.0], [4.0]]])
+        batch_x_mark = torch.zeros((2, 5, 1))
+        batch_y_mark = torch.zeros((2, args.pred_len, 1))
+        batch_cycle = torch.tensor([0, 1])
+        test_loader = [
+            (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle)
+        ]
+        experiment._get_data = lambda flag: (None, test_loader)
+
+        previous_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                os.chdir(temp_dir)
+                result = experiment.test("synthetic_context_setting")
+                result_file = (
+                    Path("results")
+                    / "synthetic_context_setting"
+                    / "boundary_reconstruct_mad3.json"
+                )
+                self.assertTrue(result_file.is_file())
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(len(experiment.model.inputs), 2)
+        torch.testing.assert_close(experiment.model.inputs[0], original_batch_x)
+        torch.testing.assert_close(
+            experiment.model.inputs[1][:, -1, :],
+            original_batch_x[:, -2, :],
+        )
+        torch.testing.assert_close(batch_x, original_batch_x)
+        self.assertEqual(result["fixed"]["mse"], 0.0)
+        self.assertEqual(result["boundary_reconstruction"]["replacement_rate"], 1.0)
+        self.assertTrue(result["boundary_reconstruction"]["causal"])
+
     def test_boundary_fix_compares_original_and_fixed_views(self):
         ExpMain = load_exp_main_for_test()
         args = types.SimpleNamespace(
