@@ -221,8 +221,8 @@ if args.perturb_ratio < 0:
     parser.error('--perturb_ratio must be non-negative')
 if not 1 <= args.perturb_offset <= args.seq_len:
     parser.error('--perturb_offset must be in [1, seq_len]')
-if (args.boundary_fix or args.boundary_reconstruct) and args.perturb_type != 'none':
-    parser.error('boundary intervention cannot be combined with input perturbation')
+if args.boundary_fix and args.perturb_type != 'none':
+    parser.error('--boundary_fix cannot be combined with input perturbation')
 if args.boundary_fix and args.boundary_reconstruct:
     parser.error('--boundary_fix and --boundary_reconstruct are mutually exclusive')
 if not math.isfinite(args.boundary_threshold) or args.boundary_threshold <= 0:

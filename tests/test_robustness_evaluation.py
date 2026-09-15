@@ -102,6 +102,82 @@ class PreviousPointReconstructor(torch.nn.Module):
 
 
 class RobustnessEvaluationTest(unittest.TestCase):
+    def test_perturbed_boundary_can_be_reconstructed_before_forecasting(self):
+        ExpMain = load_exp_main_for_test()
+        args = types.SimpleNamespace(
+            model="GTR",
+            use_amp=False,
+            output_attention=False,
+            pred_len=2,
+            label_len=0,
+            features="M",
+            test_flop=False,
+            perturb_type="last",
+            perturb_ratio=10.0,
+            perturb_seed=2024,
+            perturb_offset=1,
+            boundary_fix=0,
+            boundary_reconstruct=1,
+            boundary_threshold=1.0,
+            boundary_hidden_dim=8,
+            model_id="synthetic_repair_5_2",
+            data="custom",
+            data_path="synthetic.csv",
+            dataset_name="SyntheticBoundaryRepair",
+            seq_len=5,
+            enc_in=1,
+            cycle=24,
+            random_seed=2024,
+        )
+        experiment = ExpMain(args)
+        experiment.device = torch.device("cpu")
+        experiment.model = RecordingGTR(pred_len=args.pred_len)
+        experiment.boundary_reconstructor = PreviousPointReconstructor()
+
+        batch_x = torch.tensor(
+            [
+                [[0.0], [1.0], [2.0], [3.0], [3.0]],
+                [[1.0], [2.0], [3.0], [4.0], [4.0]],
+            ]
+        )
+        original_batch_x = batch_x.clone()
+        batch_y = torch.tensor([[[3.0], [3.0]], [[4.0], [4.0]]])
+        batch_x_mark = torch.zeros((2, 5, 1))
+        batch_y_mark = torch.zeros((2, args.pred_len, 1))
+        batch_cycle = torch.tensor([0, 1])
+        experiment._get_data = lambda flag: (
+            None,
+            [(batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle)],
+        )
+
+        previous_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                os.chdir(temp_dir)
+                result = experiment.test("synthetic_boundary_repair_setting")
+                result_file = (
+                    Path("results")
+                    / "synthetic_boundary_repair_setting"
+                    / "perturb_last_ratio10_seed2024_boundary_reconstruct_mad1.json"
+                )
+                self.assertTrue(result_file.is_file())
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(len(experiment.model.inputs), 3)
+        torch.testing.assert_close(experiment.model.inputs[0], original_batch_x)
+        self.assertFalse(
+            torch.equal(experiment.model.inputs[1], original_batch_x)
+        )
+        torch.testing.assert_close(
+            experiment.model.inputs[2][:, -1, :],
+            original_batch_x[:, -2, :],
+        )
+        self.assertGreater(result["perturbed"]["mse"], 0.0)
+        self.assertEqual(result["repaired"]["mse"], 0.0)
+        self.assertEqual(result["clean"]["mse"], 0.0)
+        self.assertGreater(result["recovery_percent"]["mse"], 0.0)
+
     def test_boundary_reconstructor_trains_and_saves_separately(self):
         ExpMain = load_exp_main_for_test()
         args = types.SimpleNamespace(

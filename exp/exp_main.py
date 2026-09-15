@@ -461,6 +461,9 @@ class Exp_Main(Exp_Basic):
         boundary_reconstruction_squared_error = 0.0
         boundary_persistence_squared_error = 0.0
         boundary_error_value_count = 0
+        flagged_reconstruction_squared_error = 0.0
+        flagged_input_squared_error = 0.0
+        flagged_error_value_count = 0
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -497,10 +500,13 @@ class Exp_Main(Exp_Basic):
                 batch_cycle = batch_cycle.int().to(self.device)
 
                 if boundary_reconstruct_enabled:
-                    predicted_last = reconstructor(batch_x)
+                    reconstruction_input = (
+                        perturbed_batch_x if perturb_enabled else batch_x
+                    )
+                    predicted_last = reconstructor(reconstruction_input)
                     fixed_batch_x, replacement_mask, boundary_scores = (
                         apply_filtered_boundary_reconstruction(
-                            batch_x,
+                            reconstruction_input,
                             predicted_last,
                             threshold=boundary_threshold,
                         )
@@ -519,6 +525,25 @@ class Exp_Main(Exp_Basic):
                         ((persistence_last - true_last) ** 2).sum().item()
                     )
                     boundary_error_value_count += true_last.numel()
+                    if replacement_mask.any():
+                        flagged_reconstruction_squared_error += float(
+                            (
+                                (predicted_last - true_last)[replacement_mask]
+                                ** 2
+                            ).sum().item()
+                        )
+                        flagged_input_squared_error += float(
+                            (
+                                (
+                                    reconstruction_input[:, -1, :]
+                                    - true_last
+                                )[replacement_mask]
+                                ** 2
+                            ).sum().item()
+                        )
+                        flagged_error_value_count += int(
+                            replacement_mask.sum().item()
+                        )
 
                 dec_inp = torch.zeros_like(
                     batch_y[:, -self.args.pred_len:, :]
@@ -701,17 +726,31 @@ class Exp_Main(Exp_Basic):
                 perturb_seed,
                 perturb_offset=perturb_offset,
             ) + '.json'
-        elif boundary_reconstruct_enabled:
+        if boundary_reconstruct_enabled:
             fixed_preds = np.concatenate(fixed_preds, axis=0)
             fixed_preds = fixed_preds.reshape(
                 -1, fixed_preds.shape[-2], fixed_preds.shape[-1]
             )
             fixed_metrics = self._primary_metrics(fixed_preds, trues)
+            reference_metrics = (
+                perturbed_metrics if perturb_enabled else clean_metrics
+            )
             improvement_absolute, improvement_percent = (
-                self._metric_improvement(clean_metrics, fixed_metrics)
+                self._metric_improvement(reference_metrics, fixed_metrics)
             )
             replacement_rate = (
                 boundary_replaced_count / boundary_value_count
+            )
+            flagged_reconstruction_mse = (
+                flagged_reconstruction_squared_error
+                / flagged_error_value_count
+                if flagged_error_value_count
+                else None
+            )
+            flagged_input_mse = (
+                flagged_input_squared_error / flagged_error_value_count
+                if flagged_error_value_count
+                else None
             )
             result.update(
                 {
@@ -737,6 +776,9 @@ class Exp_Main(Exp_Basic):
                         ),
                         'filter': 'last_increment_mad',
                         'threshold': boundary_threshold,
+                        'evaluation_input': (
+                            'perturbed' if perturb_enabled else 'clean'
+                        ),
                         'replacement_rate': float(replacement_rate),
                         'mean_filter_score': float(
                             boundary_score_sum / boundary_value_count
@@ -749,17 +791,50 @@ class Exp_Main(Exp_Basic):
                             boundary_persistence_squared_error
                             / boundary_error_value_count
                         ),
+                        'flagged_reconstruction_mse': (
+                            float(flagged_reconstruction_mse)
+                            if flagged_reconstruction_mse is not None
+                            else None
+                        ),
+                        'flagged_input_mse': (
+                            float(flagged_input_mse)
+                            if flagged_input_mse is not None
+                            else None
+                        ),
                     },
-                    'fixed': fixed_metrics,
-                    'improvement_absolute': improvement_absolute,
-                    'improvement_percent': improvement_percent,
                 }
             )
-            print(
-                'filtered boundary-reconstructed mse:{}, mae:{}'.format(
-                    fixed_metrics['mse'], fixed_metrics['mae']
+            if perturb_enabled:
+                residual_absolute, residual_percent = (
+                    self._metric_degradation(clean_metrics, fixed_metrics)
                 )
-            )
+                result.update(
+                    {
+                        'repaired': fixed_metrics,
+                        'recovery_absolute': improvement_absolute,
+                        'recovery_percent': improvement_percent,
+                        'residual_degradation_absolute': residual_absolute,
+                        'residual_degradation_percent': residual_percent,
+                    }
+                )
+                print(
+                    'filtered boundary-repaired mse:{}, mae:{}'.format(
+                        fixed_metrics['mse'], fixed_metrics['mae']
+                    )
+                )
+            else:
+                result.update(
+                    {
+                        'fixed': fixed_metrics,
+                        'improvement_absolute': improvement_absolute,
+                        'improvement_percent': improvement_percent,
+                    }
+                )
+                print(
+                    'filtered boundary-reconstructed mse:{}, mae:{}'.format(
+                        fixed_metrics['mse'], fixed_metrics['mae']
+                    )
+                )
             print(
                 'replacement rate:{:.2f}%'.format(replacement_rate * 100.0)
             )
@@ -769,8 +844,16 @@ class Exp_Main(Exp_Basic):
                     result['boundary_reconstruction']['persistence_mse'],
                 )
             )
+            if flagged_reconstruction_mse is not None:
+                print(
+                    'flagged input mse:{:.6f}, reconstructed mse:{:.6f}'.format(
+                        flagged_input_mse,
+                        flagged_reconstruction_mse,
+                    )
+                )
             print(
-                'improvement mse:{}, mae:{}'.format(
+                '{} mse:{}, mae:{}'.format(
+                    'recovery' if perturb_enabled else 'improvement',
                     (
                         '{:.2f}%'.format(improvement_percent['mse'])
                         if improvement_percent['mse'] is not None
@@ -783,9 +866,20 @@ class Exp_Main(Exp_Basic):
                     ),
                 )
             )
-            result_file = 'boundary_reconstruct_mad{}.json'.format(
-                numeric_tag(boundary_threshold)
-            )
+            if perturb_enabled:
+                result_file = '{}_boundary_reconstruct_mad{}.json'.format(
+                    perturbation_tag(
+                        perturb_type,
+                        perturb_ratio,
+                        perturb_seed,
+                        perturb_offset=perturb_offset,
+                    ),
+                    numeric_tag(boundary_threshold),
+                )
+            else:
+                result_file = 'boundary_reconstruct_mad{}.json'.format(
+                    numeric_tag(boundary_threshold)
+                )
         elif boundary_fix_enabled:
             fixed_preds = np.concatenate(fixed_preds, axis=0)
             fixed_preds = fixed_preds.reshape(
@@ -827,7 +921,7 @@ class Exp_Main(Exp_Basic):
                 )
             )
             result_file = 'boundary_fix_last_value.json'
-        else:
+        elif not perturb_enabled:
             result_file = 'clean_metrics.json'
 
         with open(
@@ -853,7 +947,7 @@ class Exp_Main(Exp_Basic):
                         result['perturbed']['mae'],
                     )
                 )
-            elif boundary_reconstruct_enabled:
+            if boundary_reconstruct_enabled and not perturb_enabled:
                 output_file.write(
                     'boundary_reconstruct:context_mlp_delta threshold:{} '
                     'mse:{}, mae:{}, mse_improvement:{:.2f}%, '
@@ -863,6 +957,20 @@ class Exp_Main(Exp_Basic):
                         result['fixed']['mae'],
                         result['improvement_percent']['mse'],
                         result['improvement_percent']['mae'],
+                        result['boundary_reconstruction']['replacement_rate']
+                        * 100.0,
+                    )
+                )
+            elif boundary_reconstruct_enabled:
+                output_file.write(
+                    'boundary_repair:context_mlp_delta threshold:{} '
+                    'mse:{}, mae:{}, mse_recovery:{:.2f}%, '
+                    'mae_recovery:{:.2f}%, replacement_rate:{:.2f}%\n'.format(
+                        boundary_threshold,
+                        result['repaired']['mse'],
+                        result['repaired']['mae'],
+                        result['recovery_percent']['mse'],
+                        result['recovery_percent']['mae'],
                         result['boundary_reconstruction']['replacement_rate']
                         * 100.0,
                     )
