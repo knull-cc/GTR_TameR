@@ -685,6 +685,8 @@ class Exp_Main(Exp_Basic):
             'data': self.args.data,
             'data_path': self.args.data_path,
             'features': self.args.features,
+            'target': getattr(self.args, 'target', None),
+            'enc_in': int(getattr(self.args, 'enc_in', clean_preds.shape[-1])),
             'seq_len': int(self.args.seq_len),
             'pred_len': int(self.args.pred_len),
             'cycle': int(self.args.cycle),

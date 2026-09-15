@@ -155,6 +155,19 @@ probability. Validation always uses the reconstructed view so early stopping
 tracks the intended inference path. This experiment uses separate checkpoints
 and writes its summary to `./results/boundary_reconstruction_train/`.
 
+For a strictly univariate ETTh1 experiment on the high-variance `LULL`
+channel, train GTR only on the original `LULL` series and apply the independent
+boundary reconstructor only as a test-time comparison:
+
+```bash
+bash run_etth1_lull_boundary_reconstruction.sh 0
+```
+
+This runs prediction lengths 96, 192, 336, and 720 with `features=S`,
+`target=LULL`, and `enc_in=1`. Neither reconstructed inputs nor the auxiliary
+reconstructor update GTR. Results are isolated under
+`./results/boundary_reconstruction_lull/`.
+
 ### Experimental GTR + NTE plugin
 
 `GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend
