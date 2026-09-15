@@ -58,7 +58,7 @@ common_args=(
 )
 
 for pred_len in "${pred_lengths[@]}"; do
-    model_id="Exchange_${seq_len}_${pred_len}"
+    model_id="ExchangeBoundaryRecon_${seq_len}_${pred_len}"
 
     echo "Training clean original GTR from scratch on Exchange for H=${pred_len}"
     echo "Training the independent prefix-only boundary reconstructor"
