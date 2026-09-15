@@ -21,6 +21,8 @@ def parse_args():
     parser.add_argument("--model", default="GTR")
     parser.add_argument("--seq-len", type=int, default=96)
     parser.add_argument("--train-seed", type=int, default=2024)
+    parser.add_argument("--model-id-prefix", default=None)
+    parser.add_argument("--output-tag", default="boundary_reconstruct")
     parser.add_argument("--threshold", type=float, default=3.0)
     parser.add_argument(
         "--expected-pred-lens",
@@ -67,6 +69,12 @@ def matches_experiment(result, args):
         and threshold_matches
         and "clean" in result
         and "fixed" in result
+        and (
+            args.model_id_prefix is None
+            or str(result.get("model_id", "")).startswith(
+                args.model_id_prefix
+            )
+        )
     )
 
 
@@ -157,10 +165,11 @@ def main():
     rows = [by_horizon[pred_len] for pred_len in args.expected_pred_lens]
     average = average_rows(rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = "{}_{}_sl{}_boundary_reconstruct_mad{}".format(
+    stem = "{}_{}_sl{}_{}_mad{}".format(
         args.dataset,
         args.model,
         args.seq_len,
+        args.output_tag,
         numeric_tag(args.threshold),
     )
     csv_path = args.output_dir / f"{stem}.csv"

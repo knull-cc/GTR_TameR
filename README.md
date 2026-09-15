@@ -142,6 +142,19 @@ filtered-reconstructed views. Set `BOUNDARY_THRESHOLD`, `BOUNDARY_HIDDEN_DIM`,
 or `BOUNDARY_EPOCHS` to override the defaults. Four-horizon CSV/JSON summaries
 are written to `./results/boundary_reconstruction/`.
 
+To pretrain and freeze the same causal boundary reconstructor, then train GTR
+on a 50/50 per-window mixture of original and filtered-reconstructed inputs for
+ETTh1 prediction lengths 96, 192, 336, and 720, run:
+
+```bash
+bash run_etth1_boundary_reconstruction_train.sh 0
+```
+
+Set `BOUNDARY_TRAIN_MIX_PROBABILITY` to change the reconstructed-window
+probability. Validation always uses the reconstructed view so early stopping
+tracks the intended inference path. This experiment uses separate checkpoints
+and writes its summary to `./results/boundary_reconstruction_train/`.
+
 ### Experimental GTR + NTE plugin
 
 `GTRNTE` wraps the complete GTR model with a parameter-free Noise-aware Trend

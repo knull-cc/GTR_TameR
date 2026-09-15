@@ -102,6 +102,42 @@ class PreviousPointReconstructor(torch.nn.Module):
 
 
 class RobustnessEvaluationTest(unittest.TestCase):
+    def test_boundary_training_mixes_raw_and_reconstructed_windows(self):
+        ExpMain = load_exp_main_for_test()
+        args = types.SimpleNamespace(
+            boundary_train_mode="mixed",
+            boundary_train_mix_probability=1.0,
+            boundary_threshold=1.0,
+        )
+        experiment = ExpMain(args)
+        experiment.boundary_reconstructor = PreviousPointReconstructor()
+        batch_x = torch.tensor(
+            [
+                [[0.0], [1.0], [2.0], [3.0], [20.0]],
+                [[1.0], [2.0], [3.0], [4.0], [-10.0]],
+            ]
+        )
+
+        reconstructed = experiment._boundary_training_input(
+            batch_x, batch_index=0, training=True
+        )
+        torch.testing.assert_close(
+            reconstructed[:, -1, :], batch_x[:, -2, :]
+        )
+
+        args.boundary_train_mix_probability = 0.0
+        raw = experiment._boundary_training_input(
+            batch_x, batch_index=0, training=True
+        )
+        torch.testing.assert_close(raw, batch_x)
+
+        validation = experiment._boundary_training_input(
+            batch_x, batch_index=0, training=False
+        )
+        torch.testing.assert_close(
+            validation[:, -1, :], batch_x[:, -2, :]
+        )
+
     def test_perturbed_boundary_can_be_reconstructed_before_forecasting(self):
         ExpMain = load_exp_main_for_test()
         args = types.SimpleNamespace(
@@ -215,6 +251,12 @@ class RobustnessEvaluationTest(unittest.TestCase):
 
         self.assertIs(reconstructor, experiment.boundary_reconstructor)
         self.assertEqual(len(experiment.model.inputs), 0)
+        self.assertTrue(
+            all(
+                not parameter.requires_grad
+                for parameter in reconstructor.parameters()
+            )
+        )
 
     def test_filtered_context_reconstruction_uses_same_frozen_backbone(self):
         ExpMain = load_exp_main_for_test()

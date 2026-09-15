@@ -354,6 +354,24 @@ class NTETest(unittest.TestCase):
         self.assertNotEqual(numeric_tag(1.0000001), numeric_tag(1.0000002))
         self.assertNotEqual(numeric_tag(0.1234564), numeric_tag(0.12345649))
 
+    def test_boundary_training_configuration_is_in_checkpoint_identity(self):
+        config = SimpleNamespace(
+            model_id="ETTh1BoundaryTrainMixedP0p5_96_96",
+            model="GTR",
+            data="ETTh1",
+            features="M",
+            seq_len=96,
+            pred_len=96,
+            cycle=24,
+            boundary_train_mode="mixed",
+            boundary_train_mix_probability=0.5,
+            boundary_threshold=4.0,
+        )
+
+        setting = experiment_setting(config, seed=2024)
+
+        self.assertIn("btrain_mixed_p0p5_mad4", setting)
+
 
 if __name__ == "__main__":
     unittest.main()

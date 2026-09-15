@@ -90,12 +90,51 @@ class Exp_Main(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
+    def _boundary_training_input(self, batch_x, batch_index, training):
+        """Apply the frozen causal boundary pipeline used by robust training."""
+
+        mode = getattr(self.args, 'boundary_train_mode', 'none')
+        if mode == 'none':
+            return batch_x
+
+        reconstructor = getattr(self, 'boundary_reconstructor', None)
+        if reconstructor is None:
+            raise RuntimeError(
+                'boundary reconstructor must be trained before GTR when '
+                '--boundary_train_mode is enabled'
+            )
+        reconstructor.eval()
+        with torch.no_grad():
+            predicted_last = reconstructor(batch_x)
+            reconstructed, _, _ = apply_filtered_boundary_reconstruction(
+                batch_x,
+                predicted_last,
+                threshold=float(self.args.boundary_threshold),
+            )
+
+        if mode == 'reconstructed' or not training:
+            # Early stopping follows the deployment path that this experiment
+            # is intended to improve: filtered reconstruction at inference.
+            return reconstructed
+        if mode != 'mixed':
+            raise ValueError('unsupported boundary training mode: {}'.format(mode))
+
+        probability = float(self.args.boundary_train_mix_probability)
+        if training:
+            choose_reconstructed = torch.rand(
+                batch_x.shape[0], 1, 1, device=batch_x.device
+            ) < probability
+        return torch.where(choose_reconstructed, reconstructed, batch_x)
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
+                batch_x = self._boundary_training_input(
+                    batch_x, batch_index=i, training=False
+                )
                 batch_y = batch_y.float()
 
                 batch_x_mark = batch_x_mark.float().to(self.device)
@@ -179,6 +218,9 @@ class Exp_Main(Exp_Basic):
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
+                batch_x = self._boundary_training_input(
+                    batch_x, batch_index=i, training=True
+                )
 
                 batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
@@ -399,6 +441,8 @@ class Exp_Main(Exp_Basic):
 
         reconstructor.load_state_dict(torch.load(checkpoint_path))
         reconstructor.eval()
+        for parameter in reconstructor.parameters():
+            parameter.requires_grad_(False)
         self.boundary_reconstructor = reconstructor
         return reconstructor
 
@@ -413,6 +457,8 @@ class Exp_Main(Exp_Basic):
         reconstructor = self._new_boundary_reconstructor()
         reconstructor.load_state_dict(torch.load(checkpoint_path))
         reconstructor.eval()
+        for parameter in reconstructor.parameters():
+            parameter.requires_grad_(False)
         self.boundary_reconstructor = reconstructor
         return reconstructor
 
@@ -645,6 +691,21 @@ class Exp_Main(Exp_Basic):
             'train_seed': int(self.args.random_seed),
             'clean': clean_metrics,
         }
+        boundary_train_mode = getattr(
+            self.args, 'boundary_train_mode', 'none'
+        )
+        if boundary_train_mode != 'none':
+            result['boundary_training'] = {
+                'mode': boundary_train_mode,
+                'mix_probability': float(
+                    getattr(
+                        self.args, 'boundary_train_mix_probability', 0.5
+                    )
+                ),
+                'reconstructor_frozen': True,
+                'filter': 'last_increment_mad',
+                'threshold': boundary_threshold,
+            }
         if self.args.model == 'GTRNTE':
             result['plugin'] = {
                 'name': 'NTE',

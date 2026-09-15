@@ -27,4 +27,13 @@ def experiment_setting(args, seed):
             numeric_tag(args.nte_gamma_max),
             numeric_tag(args.nte_guard_sigma),
         )
+    boundary_train_mode = getattr(args, 'boundary_train_mode', 'none')
+    if boundary_train_mode != 'none':
+        setting += '_btrain_{}_p{}_mad{}'.format(
+            boundary_train_mode,
+            numeric_tag(
+                getattr(args, 'boundary_train_mix_probability', 0.5)
+            ),
+            numeric_tag(getattr(args, 'boundary_threshold', 3.0)),
+        )
     return setting

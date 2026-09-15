@@ -94,6 +94,27 @@ parser.add_argument(
     default=0.001,
     help='learning rate for the context boundary reconstructor',
 )
+parser.add_argument(
+    '--boundary_train_mode',
+    type=str,
+    default='none',
+    choices=('none', 'mixed', 'reconstructed'),
+    help=(
+        "GTR training input policy: 'none' keeps the original input, "
+        "'mixed' replaces a random fraction of training windows with their "
+        "filtered reconstruction, and 'reconstructed' always uses the "
+        "filtered reconstruction"
+    ),
+)
+parser.add_argument(
+    '--boundary_train_mix_probability',
+    type=float,
+    default=0.5,
+    help=(
+        "per-window probability of using the reconstructed view when "
+        "--boundary_train_mode=mixed"
+    ),
+)
 
 # basic config
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
@@ -235,6 +256,12 @@ if args.boundary_patience <= 0:
     parser.error('--boundary_patience must be positive')
 if not math.isfinite(args.boundary_learning_rate) or args.boundary_learning_rate <= 0:
     parser.error('--boundary_learning_rate must be finite and positive')
+if args.boundary_train_mode != 'none' and not args.boundary_reconstruct:
+    parser.error('--boundary_train_mode requires --boundary_reconstruct 1')
+if not math.isfinite(args.boundary_train_mix_probability) or not (
+    0.0 <= args.boundary_train_mix_probability <= 1.0
+):
+    parser.error('--boundary_train_mix_probability must be in [0, 1]')
 if not math.isfinite(args.nte_cutoff_ratio) or not (
     0.0 < args.nte_cutoff_ratio <= 1.0
 ):
@@ -274,10 +301,17 @@ if args.is_training:
         setting = experiment_setting(args, fix_seed)
 
         exp = Exp(args)  # set experiments
+        if args.boundary_reconstruct and args.boundary_train_mode != 'none':
+            print(
+                '>>>>>>>pretraining boundary reconstructor : '
+                '{}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting)
+            )
+            exp.train_boundary_reconstructor(setting)
+
         print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
         exp.train(setting)
 
-        if args.boundary_reconstruct:
+        if args.boundary_reconstruct and args.boundary_train_mode == 'none':
             print(
                 '>>>>>>>training boundary reconstructor : '
                 '{}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting)
